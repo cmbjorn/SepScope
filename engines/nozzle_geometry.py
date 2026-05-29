@@ -1,31 +1,36 @@
 """
-Nozzle placement geometry on pressure vessel endcaps.
+Nozzle placement geometry on pressure vessel endcaps — horizontal vessel convention.
 
-Given a vertical offset from the vessel pole (top of endcap) and a nozzle
-nominal diameter, determines the radial offset, angular position, zone
-classification, and geometric feasibility.
+Input reference
+---------------
+d_from_top_mm : vertical distance from the vessel TOP inner wall to the nozzle
+                centreline.
+                0 mm   = nozzle centreline at the same height as the inside top
+                         of the cylindrical shell (at the tangent line between
+                         shell and head, outermost position, generally not
+                         buildable).
+                Di/2   = nozzle centreline on the vessel horizontal axis.
+                Di     = nozzle centreline at the inside bottom.
 
-Torispherical head geometry notes
------------------------------------
-The crown sphere has radius R_c, with centre on the vessel axis at depth R_c
-below the pole.  The knuckle torus has minor radius r_k; its generating
-circle (cross-section) has centre at (Di/2 − r_k, z_kc).  The depth of the
-knuckle centre is found from the internal-tangency condition:
+This measurement is independent of head type.  The geometry engine converts it
+to the radial distance from the vessel axis (r) and, from the head surface
+equation, to the axial depth of the nozzle on the curved head face.
 
-    z_kc = R_c − sqrt((R_c − r_k)² − (Di/2 − r_k)²)
+Proximity to the vessel wall — engineering implications
+-------------------------------------------------------
+As the nozzle moves toward the vessel wall (r → Di/2):
 
-The head–cylinder tangent line is at depth z_kc (where the knuckle circle
-touches the cylindrical shell).
-
-The crown–knuckle junction is the single tangent point between the crown
-sphere and the knuckle circle, found by projecting from the crown sphere
-centre through the knuckle centre:
-
-    x_cj = R_c × (Di/2 − r_k) / (R_c − r_k)
-    z_cj = R_c × (z_kc − r_k) / (R_c − r_k)
-
-A nozzle with centre at depth d_top is in the CROWN zone when d_top ≤ z_cj,
-and in the KNUCKLE zone when z_cj < d_top ≤ z_kc.
+1. The nozzle OD circle eventually overlaps the cylindrical shell → infeasible.
+2. For torispherical heads the nozzle enters the knuckle transition zone before
+   reaching the shell wall.  Standard area-replacement rules (cl. 9 / UG-37)
+   are not valid in the knuckle — specialist analysis required.
+3. As the nozzle edge approaches the head–cylinder circumferential seam weld,
+   EN 13445-3 cl. 5.6 / ASME VIII-1 UW-11 require a minimum clearance
+   (typically max(3t, 25 mm)) between adjacent weld toes.
+4. Very close to the junction, a three-way stress interaction (nozzle + head +
+   cylinder) arises that is outside the scope of standard code formulas.
+5. The reinforcement limit zone may spill into the cylindrical shell; the shell
+   thickness must also satisfy UG-45 / cl. 9.4 limits.
 
 Codes:  EN 13445-3:2021 cl. 9  /  ASME VIII Div.1 UG-36–45
 All dimensions in mm.
@@ -59,29 +64,30 @@ NOZZLE_WALL_T: dict[int, float] = {
 class NozzlePlacementResult:
     """Geometric feasibility and zone classification for one nozzle."""
     head_type: HeadType
-    Di: float               # vessel inner diameter (mm)
-    d_top_mm: float         # vertical distance from pole (mm) — input
-    dn_mm: int              # nozzle DN (nominal, mm)
-    nozzle_OD_mm: float     # nozzle outer diameter (mm)
-    nozzle_t_mm: float      # nozzle wall thickness (mm)
+    Di: float                   # vessel inner diameter (mm)
+    d_from_top_mm: float        # vertical distance from vessel top inner wall (mm) — INPUT
+    dn_mm: int                  # nozzle DN (nominal, mm)
+    nozzle_OD_mm: float
+    nozzle_t_mm: float
 
     # Computed position
-    x_from_axis_mm: float   # radial offset of nozzle centre from vessel axis (mm)
-    alpha_deg: float        # polar angle from vessel axis (°); 0 = pole, 90 = equator
-    head_depth_mm: float    # total head depth — pole to tangent line (mm)
+    r_from_axis_mm: float       # radial distance from vessel axis (mm)
+    y_nozzle_mm: float          # signed vertical position: + above axis, − below axis (mm)
+    z_on_head_mm: float         # axial depth of nozzle on head surface from tangent (mm)
+    head_depth_mm: float        # total head depth — tangent to pole (mm)
 
     # Zone and validity
-    zone: str               # "crown" | "knuckle" | "cone" | "flat" | "outside_head"
-    geom_ok: bool           # True = nozzle fits geometrically on the head
-    code_ok: bool | None    # True = zone is acceptable per EN/ASME code rules
+    zone: str                   # "crown" | "knuckle" | "cone" | "flat" | "outside_head"
+    geom_ok: bool
+    code_ok: bool | None
 
-    # Distances for reference
+    # Clearances
     nozzle_OR_mm: float = 0.0
-    edge_to_shell_mm: float = 0.0           # nozzle OD edge → cylindrical shell wall (mm)
-    edge_to_knuckle_mm: float | None = None # nozzle OD edge → crown–knuckle boundary (mm)
-    d_crown_end_mm: float | None = None     # depth of crown–knuckle junction (mm)
-    x_crown_end_mm: float | None = None     # radial offset at crown–knuckle junction (mm)
-    h_head_for_plot: float = 0.0            # head depth used by the cross-section plot (mm)
+    edge_to_shell_mm: float = 0.0        # nozzle OD edge → cylindrical shell wall (mm)
+    edge_to_knuckle_mm: float | None = None  # nozzle OD edge → crown–knuckle boundary (mm)
+    r_crown_end_mm: float | None = None   # radial offset at crown–knuckle junction (mm)
+    z_crown_end_mm: float | None = None   # axial depth of crown–knuckle junction (mm)
+    d_at_crown_end_mm: float | None = None  # d_from_top value at crown–knuckle junction
 
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -90,26 +96,93 @@ class NozzlePlacementResult:
 
 def _tori_geometry(Di: float, R_c: float, r_k: float) -> dict:
     """
-    Pre-compute all torispherical key points (in depth-from-pole convention).
-    Returns a dict with:
-        z_kc   : depth of knuckle centre from pole (= head depth, tangent line depth)
-        x_cj   : radial offset at crown–knuckle junction
-        z_cj   : depth of crown–knuckle junction from pole
+    Pre-compute torispherical key points.
+
+    Convention: Z = axial distance from the tangent plane (head–shell junction),
+    positive toward the pole.  r = radial distance from the vessel axis.
+
+    Returns:
+        h_head   : head depth (tangent to pole, mm)
+        r_cj     : radial distance of crown–knuckle junction from axis (mm)
+        z_cj     : axial depth of crown–knuckle junction from tangent (mm)
+        Z_sc     : axial position of crown sphere centre (mm, can be negative)
     """
-    x_kc = Di / 2 - r_k
+    R = Di / 2
+    x_kc = R - r_k                               # knuckle centre radial offset
+    # Tangency condition: dist(crown_ctr, knuckle_ctr) = R_c - r_k
+    # Crown sphere centre on axis at Z = Z_sc_old from POLE; in new convention:
+    # h_head = depth of tangent from pole (old z_kc) computed from:
+    #   x_kc² + (h_head - R_c)² = (R_c - r_k)²  [where old z_kc = h_head]
     inner = max(0.0, (R_c - r_k) ** 2 - x_kc ** 2)
-    z_kc = R_c - math.sqrt(inner)          # head depth = z_kc (tangent at z=z_kc)
-    dist = R_c - r_k                       # distance between sphere and knuckle centres
-    # Junction is on the line from crown centre (0, R_c) toward knuckle centre (x_kc, z_kc)
-    x_cj = R_c * x_kc / dist              # x-component
-    z_cj = R_c + R_c * (z_kc - R_c) / dist  # z-component = R_c * (z_kc - r_k) / dist
-    return {"z_kc": z_kc, "x_cj": x_cj, "z_cj": z_cj}
+    h_head_old_zsc = R_c - math.sqrt(inner)   # = z_kc in old depth-from-pole convention
+    h_head = h_head_old_zsc                   # same numerical value, now "depth from tangent"
+
+    Z_sc = h_head - R_c   # axial position of sphere centre (negative for std Klöpper)
+
+    # Crown–knuckle junction via internal tangency point projection
+    dist = R_c - r_k
+    # Direction from crown centre (Z=Z_sc, r=0) to knuckle centre (Z=0, r=x_kc):
+    dZ = 0 - Z_sc    # = -Z_sc = R_c - h_head
+    dr = x_kc - 0
+    # Junction = crown_centre + R_c × unit(to knuckle centre)
+    r_cj = 0 + R_c * dr / dist
+    z_cj = Z_sc + R_c * dZ / dist
+
+    return {
+        "h_head": h_head,
+        "r_cj": r_cj,
+        "z_cj": z_cj,
+        "Z_sc": Z_sc,
+    }
+
+
+def _z_on_head(head_type: HeadType, Di: float, r: float,
+               R_c: float, r_k: float, b: float, alpha_deg: float,
+               tg: dict | None = None) -> float:
+    """
+    Axial depth of the head surface at radial distance r from the axis.
+    Returned value: Z from the tangent plane (0 = tangent, h_head = pole).
+    Returns 0.0 if r > Di/2 (outside head).
+    """
+    R = Di / 2
+    if r > R:
+        return 0.0
+
+    if head_type == HeadType.HEMISPHERICAL:
+        return math.sqrt(max(0.0, R ** 2 - r ** 2))
+
+    elif head_type == HeadType.ELLIPSOIDAL:
+        h_head = b
+        return h_head * math.sqrt(max(0.0, 1 - (r / R) ** 2))
+
+    elif head_type == HeadType.TORISPHERICAL:
+        if tg is None:
+            tg = _tori_geometry(Di, R_c, r_k)
+        r_cj = tg["r_cj"]
+        Z_sc = tg["Z_sc"]
+        x_kc = R - r_k
+
+        if r <= r_cj:
+            # Crown sphere
+            return Z_sc + math.sqrt(max(0.0, R_c ** 2 - r ** 2))
+        else:
+            # Knuckle torus (generating circle at Z=0, r=x_kc, radius r_k)
+            return math.sqrt(max(0.0, r_k ** 2 - (r - x_kc) ** 2))
+
+    elif head_type == HeadType.CONICAL:
+        alpha_rad = math.radians(alpha_deg)
+        h_head = R / math.tan(alpha_rad)
+        # On a cone: r / tan(α) = Z → r = Z*tan(α) → Z = r / tan(α)
+        return (R - r) / math.tan(alpha_rad)   # depth from tangent at radial r
+
+    else:  # FLAT
+        return 0.0
 
 
 def nozzle_on_head(
     head_type: HeadType,
     Di: float,
-    d_top_mm: float,
+    d_from_top_mm: float,
     dn_mm: int,
     crown_ratio: float = 1.0,
     knuckle_ratio: float = 0.1,
@@ -117,23 +190,19 @@ def nozzle_on_head(
     ellipse_ratio: float = 2.0,
     nozzle_OD_mm: float | None = None,
     nozzle_t_mm: float | None = None,
+    t_head_nom_mm: float = 20.0,   # for weld-clearance check
 ) -> NozzlePlacementResult:
     """
     Evaluate nozzle placement on a pressure vessel endcap.
 
     Parameters
     ----------
-    head_type       : endcap type (HeadType enum)
-    Di              : vessel inner diameter (mm)
-    d_top_mm        : vertical distance from pole to nozzle centre (mm).
-                      For flat heads: radial distance from plate centre.
+    d_from_top_mm   : vertical distance from the vessel top inner wall to the
+                      nozzle centreline (mm).  0 = top of vessel inner wall,
+                      Di/2 = vessel axis, Di = bottom.
     dn_mm           : nozzle nominal diameter (DN, integer mm)
-    crown_ratio     : R_c / Di for torispherical crown sphere (default 1.0)
-    knuckle_ratio   : r_k / Di for torispherical knuckle (default 0.1)
-    alpha_deg_cone  : half-apex angle for conical heads (degrees)
-    ellipse_ratio   : Di / (2h), 2.0 = standard 2:1 ellipse
-    nozzle_OD_mm    : override nozzle OD; if None, looked up from NOZZLE_OD table
-    nozzle_t_mm     : override nozzle wall; if None, looked up from NOZZLE_WALL_T
+    t_head_nom_mm   : nominal head thickness (mm) — used for weld clearance check
+    All other parameters: head geometry (same as head_geometry())
     """
     if nozzle_OD_mm is None:
         nozzle_OD_mm = NOZZLE_OD.get(dn_mm, dn_mm * 1.05)
@@ -141,155 +210,153 @@ def nozzle_on_head(
         nozzle_t_mm = NOZZLE_WALL_T.get(dn_mm, 6.0)
 
     nozzle_OR = nozzle_OD_mm / 2.0
-    R = Di / 2.0  # vessel inner radius
+    R = Di / 2.0
+
+    R_c = crown_ratio * Di
+    r_k = knuckle_ratio * Di
+    b = Di / (2 * ellipse_ratio)   # ellipsoidal semi-minor axis
 
     geom = head_geometry(head_type, Di, crown_ratio, knuckle_ratio, alpha_deg_cone, ellipse_ratio)
     warnings: list[str] = []
     errors: list[str] = []
 
-    x: float = 0.0
-    alpha: float = 0.0
+    # ── Radial distance and vertical position ─────────────────────────────────
+    if d_from_top_mm < 0:
+        errors.append("d_from_top cannot be negative.")
+        d_from_top_mm = 0.0
+    elif d_from_top_mm > Di:
+        errors.append(f"d_from_top {d_from_top_mm:.0f} mm > Di {Di:.0f} mm.")
+        d_from_top_mm = Di
+
+    y_nozzle = R - d_from_top_mm          # + above axis, − below axis
+    r = abs(y_nozzle)                     # radial distance from axis
+
+    # ── Head-type specific geometry ───────────────────────────────────────────
+    tg: dict | None = None
     h_head: float = 0.0
     zone: str = "crown"
-    d_crown_end: float | None = None
-    x_crown_end: float | None = None
+    r_crown_end: float | None = None
+    z_crown_end: float | None = None
+    d_at_crown_end: float | None = None
     edge_to_knuckle: float | None = None
 
-    # ── Per-head-type geometry (depth from pole convention) ───────────────────
-
     if head_type == HeadType.HEMISPHERICAL:
-        # Sphere of radius R, centre at depth R from pole.
-        # Surface: x² + (z − R)² = R²  →  x = sqrt(2Rz − z²)
-        R_s = R
-        h_head = R_s
-        if d_top_mm > h_head:
+        h_head = R
+        if r > R:
             errors.append(
-                f"d_top {d_top_mm:.0f} mm exceeds head depth {h_head:.0f} mm — "
-                "nozzle is on the cylindrical shell, not the endcap.")
-            x, alpha, zone = R, 90.0, "outside_head"
+                f"Radial offset r = {r:.0f} mm > vessel radius R = {R:.0f} mm. "
+                "Nozzle is outside the vessel — check d_from_top.")
+            zone = "outside_head"
         else:
-            x = math.sqrt(max(0.0, 2 * R_s * d_top_mm - d_top_mm ** 2))
-            alpha = math.degrees(math.acos(max(-1.0, min(1.0, 1 - d_top_mm / R_s))))
             zone = "crown"
-        d_crown_end = h_head
+        r_crown_end = R   # head extends to r = R at the tangent
+        z_crown_end = 0.0
 
     elif head_type == HeadType.ELLIPSOIDAL:
-        # Semi-minor axis b = Di/(2·ellipse_ratio) = head height from tangent to pole.
-        # Ellipse: (x/a)² + ((b−z)/b)² = 1  →  x = a·sqrt(1 − ((b−z)/b)²)
-        b = Di / (2 * ellipse_ratio)
-        a = R
         h_head = b
-        if d_top_mm > h_head:
-            errors.append(
-                f"d_top {d_top_mm:.0f} mm exceeds head depth {h_head:.0f} mm — "
-                "nozzle is on the cylindrical shell, not the endcap.")
-            x, alpha, zone = R, 90.0, "outside_head"
+        if r > R:
+            errors.append(f"r = {r:.0f} mm > R = {R:.0f} mm.")
+            zone = "outside_head"
         else:
-            # z measured from pole (same as d_top); tangent is at z = b
-            frac = (b - d_top_mm) / b   # 1.0 at pole, 0.0 at tangent
-            x = a * math.sqrt(max(0.0, 1 - frac ** 2))
-            alpha = math.degrees(math.acos(max(-1.0, min(1.0, frac))))
             zone = "crown"
-        d_crown_end = h_head
+        r_crown_end = R
+        z_crown_end = 0.0
 
     elif head_type == HeadType.TORISPHERICAL:
-        R_c = crown_ratio * Di
-        r_k = knuckle_ratio * Di
+        tg = _tori_geometry(Di, R_c, r_k)
+        h_head = tg["h_head"]
+        r_cj = tg["r_cj"]
+        z_cj = tg["z_cj"]
 
         if r_k < 0.06 * Di:
             warnings.append(f"Knuckle radius r_k = {r_k:.0f} mm < 0.06·Di. Code minimum is 0.06·Di.")
 
-        tg = _tori_geometry(Di, R_c, r_k)
-        z_kc = tg["z_kc"]
-        x_cj = tg["x_cj"]
-        z_cj = tg["z_cj"]
-        h_head = z_kc   # head depth = depth at which knuckle meets cylinder
+        r_crown_end = r_cj
+        z_crown_end = z_cj
+        d_at_crown_end = R - r_cj   # d_from_top value at the crown–knuckle boundary
 
-        d_crown_end = z_cj
-        x_crown_end = x_cj
-
-        if d_top_mm > h_head:
-            errors.append(
-                f"d_top {d_top_mm:.0f} mm exceeds head depth {h_head:.0f} mm — "
-                "nozzle is on the cylindrical shell, not the endcap.")
-            x, alpha, zone = R, 90.0, "outside_head"
-        elif d_top_mm <= z_cj:
-            # Crown (spherical) zone
-            x = math.sqrt(max(0.0, 2 * R_c * d_top_mm - d_top_mm ** 2))
-            cos_a = max(-1.0, min(1.0, 1 - d_top_mm / R_c))
-            alpha = math.degrees(math.acos(cos_a))
+        if r > R:
+            errors.append(f"r = {r:.0f} mm > R = {R:.0f} mm.")
+            zone = "outside_head"
+        elif r <= r_cj:
             zone = "crown"
         else:
-            # Knuckle zone
-            dz = d_top_mm - z_kc   # ≤ 0 (knuckle arcs from z_kc upward toward pole)
-            x_kc = Di / 2 - r_k
-            x = x_kc + math.sqrt(max(0.0, r_k ** 2 - dz ** 2))
-            alpha = math.degrees(math.atan2(x, max(0.0001, R_c - d_top_mm)))
             zone = "knuckle"
             warnings.append(
-                "Nozzle centre is in the knuckle transition zone. "
+                f"Nozzle centre is in the knuckle transition zone "
+                f"(r = {r:.0f} mm > r_crown = {r_cj:.0f} mm). "
                 "EN 13445-3 cl. 9 and ASME UG-36 require nozzles on torispherical "
                 "heads to lie entirely within the spherical crown zone. "
-                "Move the nozzle closer to the pole.")
+                f"Move the nozzle so d_from_top ≤ {d_at_crown_end:.0f} mm "
+                f"(or ≥ {Di - d_at_crown_end:.0f} mm for bottom half).")
 
-        # Clearance from nozzle OD edge to the crown–knuckle boundary (radial)
+        # Radial clearance from nozzle OD edge to crown–knuckle boundary
         if zone != "outside_head":
-            edge_to_knuckle = x_cj - (x + nozzle_OR)
+            edge_to_knuckle = r_cj - (r + nozzle_OR)
             if zone == "crown" and edge_to_knuckle < 0:
                 warnings.append(
                     f"Nozzle OD edge extends {-edge_to_knuckle:.0f} mm into the "
-                    f"knuckle zone (nozzle edge at x = {x + nozzle_OR:.0f} mm, "
-                    f"junction at x = {x_cj:.0f} mm). "
-                    "Reduce nozzle size or move closer to the pole.")
+                    f"knuckle zone (nozzle edge at r = {r + nozzle_OR:.0f} mm, "
+                    f"knuckle starts at r = {r_cj:.0f} mm). "
+                    "Reduce nozzle size or move toward the axis.")
                 zone = "knuckle"
 
     elif head_type == HeadType.CONICAL:
         alpha_rad = math.radians(alpha_deg_cone)
-        h_head = R / math.tan(alpha_rad)   # full cone height apex→base
-
-        if d_top_mm < 0:
-            errors.append("d_top cannot be negative.")
-            x, alpha, zone = 0.0, 0.0, "outside_head"
-        elif d_top_mm > h_head:
-            errors.append(
-                f"d_top {d_top_mm:.0f} mm exceeds cone height {h_head:.0f} mm.")
-            x, alpha, zone = R, alpha_deg_cone, "outside_head"
+        h_head = R / math.tan(alpha_rad)
+        if r > R:
+            errors.append(f"r = {r:.0f} mm > R = {R:.0f} mm.")
+            zone = "outside_head"
         else:
-            x = d_top_mm * math.tan(alpha_rad)
-            alpha = alpha_deg_cone
             zone = "cone"
-            if d_top_mm < max(50.0, nozzle_OD_mm):
+            if r < 0.1 * R:   # nozzle very close to the apex
                 warnings.append(
-                    f"Nozzle is very close to the cone apex (d_top = {d_top_mm:.0f} mm). "
+                    "Nozzle is close to the cone apex. "
                     "Reinforcement near the apex requires specialist analysis.")
 
     else:  # FLAT
-        # Interpret d_top_mm as radial distance from plate centre.
         h_head = 0.0
-        x = d_top_mm
-        alpha = 90.0
         zone = "flat"
+        if r > R:
+            errors.append(f"Nozzle at r = {r:.0f} mm > vessel R = {R:.0f} mm.")
 
-    # ── Common geometric feasibility checks ───────────────────────────────────
+    # ── Axial depth on head surface ───────────────────────────────────────────
+    z_nozzle = _z_on_head(head_type, Di, r, R_c, r_k, b, alpha_deg_cone, tg)
 
-    edge_to_shell = R - (x + nozzle_OR)
+    # ── Common geometric checks ───────────────────────────────────────────────
+    edge_to_shell = R - (r + nozzle_OR)
 
     if zone != "outside_head":
         if nozzle_OD_mm >= Di:
             errors.append(
-                f"Nozzle OD ({nozzle_OD_mm:.0f} mm) ≥ vessel Di ({Di:.0f} mm). Not feasible.")
+                f"Nozzle OD ({nozzle_OD_mm:.0f} mm) ≥ vessel Di ({Di:.0f} mm).")
         elif edge_to_shell < 0:
             errors.append(
-                f"Nozzle OD edge extends {-edge_to_shell:.0f} mm beyond the vessel inner "
-                f"wall (nozzle at x = {x:.0f} mm, OR = {nozzle_OR:.0f} mm, R = {R:.0f} mm). "
-                "Move the nozzle closer to the pole or use a smaller DN.")
-        elif edge_to_shell < 0.5 * nozzle_OR:
-            warnings.append(
-                f"Small clearance from nozzle OD edge to vessel wall: {edge_to_shell:.0f} mm.")
+                f"Nozzle OD extends {-edge_to_shell:.0f} mm beyond the vessel "
+                f"inner wall. Nozzle at r = {r:.0f} mm with OR = {nozzle_OR:.0f} mm "
+                f"gives edge at r = {r + nozzle_OR:.0f} mm > R = {R:.0f} mm. "
+                "Move nozzle toward vessel axis (increase d_from_top toward Di/2) "
+                "or use a smaller DN.")
+        else:
+            # Proximity-to-junction warning
+            # Minimum weld clearance: max(3 × t_head, 25 mm)
+            min_clearance = max(3.0 * t_head_nom_mm, 25.0)
+            if edge_to_shell < min_clearance:
+                warnings.append(
+                    f"Nozzle OD edge is only {edge_to_shell:.0f} mm from the vessel "
+                    f"inner wall (recommended minimum clearance to avoid weld "
+                    f"interference: {min_clearance:.0f} mm = max(3×t_head, 25 mm)). "
+                    "Complex 3-way stress state at the nozzle/head/shell junction — "
+                    "special analysis may be required.")
+            if d_from_top_mm < nozzle_OR or d_from_top_mm > (Di - nozzle_OR):
+                errors.append(
+                    f"Nozzle centreline is only {min(d_from_top_mm, Di - d_from_top_mm):.0f} mm "
+                    f"from the vessel wall (nozzle OR = {nozzle_OR:.0f} mm). "
+                    "Nozzle must be further from the vessel wall.")
 
     geom_ok = len(errors) == 0
 
-    # Code-zone compliance (geometric placement only; reinforcement is separate)
+    # Code-zone compliance
     if geom_ok:
         if head_type in (HeadType.HEMISPHERICAL, HeadType.ELLIPSOIDAL):
             code_ok = zone == "crown"
@@ -298,7 +365,7 @@ def nozzle_on_head(
         elif head_type == HeadType.CONICAL:
             code_ok = zone == "cone"
         elif head_type == HeadType.FLAT:
-            code_ok = (x + nozzle_OR) <= R
+            code_ok = r + nozzle_OR <= R
         else:
             code_ok = None
     else:
@@ -307,12 +374,13 @@ def nozzle_on_head(
     return NozzlePlacementResult(
         head_type=head_type,
         Di=Di,
-        d_top_mm=d_top_mm,
+        d_from_top_mm=d_from_top_mm,
         dn_mm=dn_mm,
         nozzle_OD_mm=nozzle_OD_mm,
         nozzle_t_mm=nozzle_t_mm,
-        x_from_axis_mm=round(x, 1),
-        alpha_deg=round(alpha, 2),
+        r_from_axis_mm=round(r, 1),
+        y_nozzle_mm=round(y_nozzle, 1),
+        z_on_head_mm=round(z_nozzle, 1),
         head_depth_mm=round(h_head, 1),
         zone=zone,
         geom_ok=geom_ok,
@@ -320,9 +388,9 @@ def nozzle_on_head(
         nozzle_OR_mm=round(nozzle_OR, 1),
         edge_to_shell_mm=round(edge_to_shell, 1),
         edge_to_knuckle_mm=round(edge_to_knuckle, 1) if edge_to_knuckle is not None else None,
-        d_crown_end_mm=round(d_crown_end, 1) if d_crown_end is not None else None,
-        x_crown_end_mm=round(x_crown_end, 1) if x_crown_end is not None else None,
-        h_head_for_plot=round(h_head, 1),
+        r_crown_end_mm=round(r_crown_end, 1) if r_crown_end is not None else None,
+        z_crown_end_mm=round(z_crown_end, 1) if z_crown_end is not None else None,
+        d_at_crown_end_mm=round(d_at_crown_end, 1) if d_at_crown_end is not None else None,
         warnings=warnings,
         errors=errors,
         geometry=geom,
