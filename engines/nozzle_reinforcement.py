@@ -62,6 +62,8 @@ def reinforcement_check(
     pad_thickness_mm: float | None = None,
     nozzle_h_above_mm: float | None = None,  # nozzle projection above OD surface (outward)
     nozzle_h_below_mm: float | None = None,  # nozzle projection below ID surface (inward)
+    space_to_wall_mm: float | None = None,    # clearance from nozzle OD edge to vessel wall
+    space_to_knuckle_mm: float | None = None, # clearance from nozzle OD edge to knuckle zone
 ) -> ReinforcementResult:
     """
     Area-replacement reinforcement check for a radial nozzle on a curved head.
@@ -173,6 +175,31 @@ def reinforcement_check(
     A_total = A_shell + A_nozzle + A_pad
     A_deficit = A_required - A_total
     adequate = A_deficit <= 0
+
+    # ── Pad physical feasibility ──────────────────────────────────────────────
+    # A computed pad width only helps if the pad physically fits on the head.
+    if pad_required and pad_width is not None:
+        # Check 1: pad outer edge vs vessel wall
+        if space_to_wall_mm is not None and pad_width > space_to_wall_mm:
+            warnings.append(
+                f"Pad cannot fit: required half-width {pad_width:.0f} mm "
+                f"exceeds available space to vessel wall {space_to_wall_mm:.0f} mm. "
+                "The pad would collide with the head–shell circumferential seam weld. "
+                "Options: increase head/nozzle wall thickness, move nozzle toward axis, "
+                "use a smaller DN, or use an insert plate with specialist analysis.")
+            adequate = False
+
+        # Check 2: pad outer edge vs knuckle zone (torispherical heads)
+        if (space_to_knuckle_mm is not None
+                and space_to_knuckle_mm >= 0
+                and pad_width > space_to_knuckle_mm):
+            overlap = pad_width - space_to_knuckle_mm
+            warnings.append(
+                f"Pad outer edge extends {overlap:.0f} mm into the knuckle transition "
+                "zone. The area-replacement method (EN cl. 9 / ASME UG-37) is not valid "
+                "in the knuckle — the pad area credit cannot be claimed there. "
+                "FEA or specialist analysis required.")
+            adequate = False
 
     # Warnings
     if t_head_corroded_nom <= t_head_req_mm:

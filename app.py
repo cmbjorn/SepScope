@@ -214,6 +214,26 @@ def _vessel_figure(
             showlegend=False, hoverinfo="skip",
         ))
 
+        # Edge-to-wall clearance annotation — vertical line from nozzle top edge to wall
+        if nres.geom_ok and nres.edge_to_shell_mm >= 0:
+            near_wall_y = R if ny >= 0 else -R
+            near_edge_y = ny + nOR if ny >= 0 else ny - nOR
+            if abs(near_wall_y - near_edge_y) > 5:
+                ann_x = nz + 14  # slightly right of nozzle centre so it clears the circle
+                fig.add_shape(type="line", x0=ann_x, x1=ann_x,
+                              y0=near_edge_y, y1=near_wall_y,
+                              line=dict(color="#d97706", width=1.5))
+                for y_tick in (near_edge_y, near_wall_y):
+                    fig.add_shape(type="line",
+                                  x0=ann_x - 7, x1=ann_x + 7, y0=y_tick, y1=y_tick,
+                                  line=dict(color="#d97706", width=1.5))
+                fig.add_annotation(
+                    x=ann_x + 12, y=(near_edge_y + near_wall_y) / 2,
+                    text=f"{nres.edge_to_shell_mm:.0f} mm",
+                    showarrow=False, xanchor="left",
+                    font=dict(size=11, color="#b45309"),
+                )
+
         # d_from_top dimension annotation — vertical arrow left of head
         if nres.d_from_top_mm > 5 and abs(ny - R) > 5:
             z_ann = -(h_head + 70)
@@ -426,6 +446,8 @@ def main():
         t_head_req_mm=head_res.t_calc_mm,
         t_head_nom_mm=head_res.t_nom_mm,
         CA_mm=CA_mm, code=code_key, z=z_weld,
+        space_to_wall_mm=nozzle_res.edge_to_shell_mm,
+        space_to_knuckle_mm=nozzle_res.edge_to_knuckle_mm,
     )
 
     if code_key == "EN":
