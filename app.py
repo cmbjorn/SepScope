@@ -129,32 +129,95 @@ def _vessel_figure(
     zs_upper, ys_upper = _head_surface_points(head_type, Di, R_c, r_k, alpha_deg, b)
     h_head = max((abs(z) for z in zs_upper), default=0.0)
 
+    # Weld clearance minimum (for exclusion zone overlay)
+    min_weld_clr = max(3.0 * t_head_nom, 25.0) if t_head_nom > 0 else 25.0
+    r_weld_boundary = R - min_weld_clr   # nozzle OD edge must stay inside this radius
+
     fig = go.Figure()
 
-    # ── Torispherical crown zone fill ─────────────────────────────────────────
+    # ── Zone fills — drawn first so everything else sits on top ───────────────
     if head_type == HeadType.TORISPHERICAL:
         tg = _tori_geometry(Di, R_c, r_k)
         r_cj = tg["r_cj"]
         z_cj = tg["z_cj"]
         Z_sc = tg["Z_sc"]
-
+        x_kc = R - r_k
         angle_junc = math.asin(min(1.0, r_cj / R_c))
-        N_cr = 60
-        crown_z = [-(Z_sc + R_c * math.cos(angle_junc * i / N_cr)) for i in range(N_cr + 1)]
-        crown_y = [R_c * math.sin(angle_junc * i / N_cr) for i in range(N_cr + 1)]
+        theta_junc = math.atan2(z_cj, r_cj - x_kc)
+        N_z = 80
+        N1 = max(2, int(N_z * z_cj / max(h_head, 1e-6)))
+        N2 = N_z - N1
 
-        # Polygon: upper arc forward + lower arc backward (vertical close at junction)
-        fill_z = crown_z + list(reversed(crown_z))
-        fill_y = crown_y + [-y for y in reversed(crown_y)]
+        # Crown arc: pole → junction
+        cz = [-(Z_sc + R_c * math.cos(angle_junc * i / N1)) for i in range(N1 + 1)]
+        cy = [R_c * math.sin(angle_junc * i / N1)            for i in range(N1 + 1)]
+
+        # Knuckle arc: junction → tangent
+        kz, ky = [], []
+        for i in range(N2 + 1):
+            th = theta_junc * (1.0 - i / N2)
+            kz.append(-(r_k * math.sin(th)))
+            ky.append(x_kc + r_k * math.cos(th))
+
+        # Crown zone fill (green): pole ↔ upper crown arc ↔ junction ↔ lower arc ↔ pole
         fig.add_trace(go.Scatter(
-            x=fill_z, y=fill_y,
-            fill="toself", fillcolor="rgba(34,197,94,0.10)",
+            x=cz + list(reversed(cz)),
+            y=cy + [-y for y in reversed(cy)],
+            fill="toself", fillcolor="rgba(34,197,94,0.22)",
             line=dict(color="rgba(0,0,0,0)", width=0),
-            name="Crown zone", hoverinfo="skip",
+            name="Crown — nozzle permitted", hoverinfo="skip",
         ))
-        fig.add_shape(
-            type="line", x0=-z_cj, x1=-z_cj, y0=-r_cj, y1=r_cj,
-            line=dict(color="rgba(34,197,94,0.7)", width=1.5, dash="dash"),
+
+        # Knuckle zone fill (amber): junction ↔ upper knuckle arc ↔ tangent ↔ lower arc ↔ junction
+        fig.add_trace(go.Scatter(
+            x=kz + list(reversed(kz)),
+            y=ky + [-y for y in reversed(ky)],
+            fill="toself", fillcolor="rgba(245,158,11,0.25)",
+            line=dict(color="rgba(0,0,0,0)", width=0),
+            name="Knuckle — non-standard placement", hoverinfo="skip",
+        ))
+
+        # Crown–knuckle junction boundary (dashed green)
+        fig.add_shape(type="line", x0=-z_cj, x1=-z_cj, y0=-r_cj, y1=r_cj,
+                      line=dict(color="#16a34a", width=1.8, dash="dash"))
+
+        # Zone text labels
+        mid_crown_z = -(h_head + z_cj) / 2
+        fig.add_annotation(x=mid_crown_z, y=0, text="Crown",
+                           showarrow=False, font=dict(size=10, color="#15803d"),
+                           bgcolor="rgba(255,255,255,0.55)", borderpad=2)
+        mid_kn_z = -z_cj / 2
+        fig.add_annotation(x=mid_kn_z, y=(r_cj + R) / 2, text="Knuckle",
+                           showarrow=False, font=dict(size=9, color="#b45309"),
+                           bgcolor="rgba(255,255,255,0.55)", borderpad=2)
+        fig.add_annotation(x=mid_kn_z, y=-(r_cj + R) / 2, text="Knuckle",
+                           showarrow=False, font=dict(size=9, color="#b45309"),
+                           bgcolor="rgba(255,255,255,0.55)", borderpad=2)
+
+    elif head_type != HeadType.FLAT:
+        # Hemispherical, ellipsoidal, conical: entire head surface is valid
+        fig.add_trace(go.Scatter(
+            x=zs_upper + list(reversed(zs_upper)),
+            y=ys_upper + [-y for y in reversed(ys_upper)],
+            fill="toself", fillcolor="rgba(34,197,94,0.18)",
+            line=dict(color="rgba(0,0,0,0)", width=0),
+            name="Full head — nozzle permitted", hoverinfo="skip",
+        ))
+
+    # ── Weld exclusion zone (near tangent line) ───────────────────────────────
+    # Dashed red lines at y = ±(R − min_clearance): nozzle OD edge must stay inside
+    if h_head > 0 and r_weld_boundary > 0:
+        for sign in (1, -1):
+            fig.add_shape(type="line",
+                          x0=-h_head, x1=cyl_len_show * 0.25,
+                          y0=sign * r_weld_boundary, y1=sign * r_weld_boundary,
+                          line=dict(color="rgba(220,38,38,0.55)", width=1.2, dash="dot"))
+        fig.add_annotation(
+            x=-h_head * 0.5, y=r_weld_boundary + 12,
+            text=f"Weld excl. ≥ {min_weld_clr:.0f} mm",
+            showarrow=False, xanchor="center", yanchor="bottom",
+            font=dict(size=8, color="#dc2626"),
+            bgcolor="rgba(255,255,255,0.6)", borderpad=2,
         )
 
     # ── Cylinder inner walls ──────────────────────────────────────────────────
