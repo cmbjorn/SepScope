@@ -13,6 +13,7 @@ from engines import (
     shell_thickness, nozzle_on_head, reinforcement_check,
 )
 from engines.nozzle_geometry import NOZZLE_OD, NOZZLE_WALL_T, _tori_geometry
+from engines.head_geometry import _FD_CROWN_RATIO, _FD_KNUCKLE_RATIO
 from standards import DN_SIZES, EN_PN_RATINGS, ASME_CLASS_PRESSURE_20C, max_pn_for_temperature
 
 st.set_page_config(
@@ -39,6 +40,12 @@ def _head_surface_points(
     R = Di / 2
     zs: list[float] = []
     ys: list[float] = []
+
+    # F&D is torispherical with fixed ratios — normalise before drawing
+    if head_type == HeadType.FLANGED_DISHED:
+        head_type   = HeadType.TORISPHERICAL
+        R_c = _FD_CROWN_RATIO   * Di
+        r_k = _FD_KNUCKLE_RATIO * Di
 
     if head_type == HeadType.HEMISPHERICAL:
         for i in range(N + 1):
@@ -113,6 +120,12 @@ def _vessel_figure(
 ) -> go.Figure:
     """Horizontal side-view cross-section: head on left, cylinder on right."""
     R = Di / 2
+    # F&D is drawn identically to torispherical with its fixed ratios
+    if head_type == HeadType.FLANGED_DISHED:
+        head_type = HeadType.TORISPHERICAL
+        R_c = _FD_CROWN_RATIO   * Di
+        r_k = _FD_KNUCKLE_RATIO * Di
+
     zs_upper, ys_upper = _head_surface_points(head_type, Di, R_c, r_k, alpha_deg, b)
     h_head = max((abs(z) for z in zs_upper), default=0.0)
 
@@ -343,11 +356,12 @@ def main():
         st.header("Endcap (head)")
 
         head_label_map = {
-            HeadType.HEMISPHERICAL: "Hemispherical",
-            HeadType.ELLIPSOIDAL:   "Ellipsoidal 2:1",
-            HeadType.TORISPHERICAL: "Torispherical (Klöpper / dished)",
-            HeadType.CONICAL:       "Conical",
-            HeadType.FLAT:          "Flat (unstayed)",
+            HeadType.HEMISPHERICAL:  "Hemispherical",
+            HeadType.ELLIPSOIDAL:    "Ellipsoidal 2:1",
+            HeadType.TORISPHERICAL:  "Torispherical (Klöpper / dished)",
+            HeadType.FLANGED_DISHED: "Flanged & Dished — ASME F&D",
+            HeadType.CONICAL:        "Conical",
+            HeadType.FLAT:           "Flat (unstayed)",
         }
         head_type = st.selectbox(
             "Head type",
@@ -367,6 +381,14 @@ def main():
                     "Knuckle radius ratio r_k/Di", min_value=0.06, max_value=0.3,
                     value=0.1, step=0.01, key="knuckle_ratio",
                     help="Minimum per EN/ASME: 0.06.")
+            elif head_type == HeadType.FLANGED_DISHED:
+                crown_ratio   = 1.0
+                knuckle_ratio = 0.06
+                st.info(
+                    "**Fixed geometry per ASME UG-32(e):**  "
+                    "Crown R_c = Di · Knuckle r_k = 0.06·Di (code minimum).  "
+                    "Shallower than Klöpper (r_k = 0.10·Di); larger crown zone."
+                )
             elif head_type == HeadType.CONICAL:
                 alpha_deg_cone = st.number_input(
                     "Half-apex angle α (°)", min_value=5.0, max_value=75.0,

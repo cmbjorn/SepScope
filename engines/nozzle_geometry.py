@@ -38,7 +38,7 @@ All dimensions in mm.
 from __future__ import annotations
 import math
 from dataclasses import dataclass, field
-from .head_geometry import HeadType, HeadGeometry, head_geometry
+from .head_geometry import HeadType, HeadGeometry, head_geometry, _FD_CROWN_RATIO, _FD_KNUCKLE_RATIO
 
 
 # Nozzle pipe OD (mm) by DN — ISO 4200 / ASME B36.10M outside diameters
@@ -155,7 +155,7 @@ def _z_on_head(head_type: HeadType, Di: float, r: float,
         h_head = b
         return h_head * math.sqrt(max(0.0, 1 - (r / R) ** 2))
 
-    elif head_type == HeadType.TORISPHERICAL:
+    elif head_type in (HeadType.TORISPHERICAL, HeadType.FLANGED_DISHED):
         if tg is None:
             tg = _tori_geometry(Di, R_c, r_k)
         r_cj = tg["r_cj"]
@@ -208,6 +208,11 @@ def nozzle_on_head(
         nozzle_OD_mm = NOZZLE_OD.get(dn_mm, dn_mm * 1.05)
     if nozzle_t_mm is None:
         nozzle_t_mm = NOZZLE_WALL_T.get(dn_mm, 6.0)
+
+    # Flanged & Dished uses fixed ASME ratios — override caller values
+    if head_type == HeadType.FLANGED_DISHED:
+        crown_ratio   = _FD_CROWN_RATIO
+        knuckle_ratio = _FD_KNUCKLE_RATIO
 
     nozzle_OR = nozzle_OD_mm / 2.0
     R = Di / 2.0
@@ -262,7 +267,7 @@ def nozzle_on_head(
         r_crown_end = R
         z_crown_end = 0.0
 
-    elif head_type == HeadType.TORISPHERICAL:
+    elif head_type in (HeadType.TORISPHERICAL, HeadType.FLANGED_DISHED):
         tg = _tori_geometry(Di, R_c, r_k)
         h_head = tg["h_head"]
         r_cj = tg["r_cj"]
@@ -360,7 +365,7 @@ def nozzle_on_head(
     if geom_ok:
         if head_type in (HeadType.HEMISPHERICAL, HeadType.ELLIPSOIDAL):
             code_ok = zone == "crown"
-        elif head_type == HeadType.TORISPHERICAL:
+        elif head_type in (HeadType.TORISPHERICAL, HeadType.FLANGED_DISHED):
             code_ok = (zone == "crown") and (edge_to_knuckle is not None) and (edge_to_knuckle >= 0)
         elif head_type == HeadType.CONICAL:
             code_ok = zone == "cone"

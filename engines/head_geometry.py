@@ -24,8 +24,13 @@ class HeadType(str, Enum):
     HEMISPHERICAL  = "Hemispherical"
     ELLIPSOIDAL    = "Ellipsoidal 2:1"
     TORISPHERICAL  = "Torispherical (dished)"
+    FLANGED_DISHED = "Flanged & Dished (ASME F&D)"
     CONICAL        = "Conical"
     FLAT           = "Flat (unstayed)"
+
+# Fixed ratios for ASME Flanged & Dished (UG-32(e), r_k = code minimum)
+_FD_CROWN_RATIO   = 1.0    # R_c = Di
+_FD_KNUCKLE_RATIO = 0.06   # r_k = 0.06·Di  (ASME/EN minimum)
 
 
 @dataclass
@@ -67,7 +72,7 @@ class HeadGeometry:
         A nozzle centre at depth d_top ≤ crown_limit_mm is in the spherical crown zone.
         Returns None for head types that have no distinct knuckle.
         """
-        if self.head_type == HeadType.TORISPHERICAL and self.r_knuckle is not None:
+        if self.head_type in (HeadType.TORISPHERICAL, HeadType.FLANGED_DISHED) and self.r_knuckle is not None:
             R_c = self.Ri
             r_k = self.r_knuckle
             z_kc = self._tori_knuckle_depth()
@@ -157,7 +162,9 @@ def head_geometry(
         Ri_eq = Di ** 2 / (4 * h)
         return HeadGeometry(head_type=head_type, Di=Di, Ri=Ri_eq, h_ellipse=h)
 
-    elif head_type == HeadType.TORISPHERICAL:
+    elif head_type in (HeadType.TORISPHERICAL, HeadType.FLANGED_DISHED):
+        if head_type == HeadType.FLANGED_DISHED:
+            crown_ratio, knuckle_ratio = _FD_CROWN_RATIO, _FD_KNUCKLE_RATIO
         r_k = knuckle_ratio * Di
         R_c = crown_ratio   * Di
         return HeadGeometry(head_type=head_type, Di=Di, Ri=R_c, r_knuckle=r_k)
@@ -243,7 +250,9 @@ def head_thickness(
             clause = "EN 13445-3 cl. 7.6"
             formula = f"t = P·Di·K / (2·fd·z − 0.5·P), K={K_en:.4f} (h={h:.1f} mm)"
 
-    elif head_type == HeadType.TORISPHERICAL:
+    elif head_type in (HeadType.TORISPHERICAL, HeadType.FLANGED_DISHED):
+        if head_type == HeadType.FLANGED_DISHED:
+            crown_ratio, knuckle_ratio = _FD_CROWN_RATIO, _FD_KNUCKLE_RATIO
         r_k = knuckle_ratio * Di
         R_c = crown_ratio   * Di
         if r_k < 0.06 * Di:
@@ -251,20 +260,17 @@ def head_thickness(
                             "Code minimum is 0.06·Di.")
         if R_c > Di:
             warnings.append(f"Crown radius R={R_c:.1f} mm > Di={Di:.1f} mm. "
-                            "Not typical; verify.")
+                            "Not typical; verify code formula applicability.")
         if code == "ASME":
-            # UG-32(e): t = 0.885*P*L / (S*E - 0.1*P),  L = crown radius
             t = 0.885 * P * R_c / (fd_MPa * z - 0.1 * P)
             clause = "ASME VIII-1 UG-32(e)"
             formula = (f"t = 0.885·P·L / (S·E − 0.1·P) = "
                        f"0.885·{P:.3f}·{R_c:.1f} / ({fd_MPa:.2f}·{z:.2f} − 0.1·{P:.3f})")
         else:
-            # EN 13445-3 cl. 7.5.3: e = P*R/(2*fd*z - 0.5*P) with buckling check
             t = P * R_c / (2 * fd_MPa * z - 0.5 * P)
             clause = "EN 13445-3 cl. 7.5.3"
             formula = (f"t = P·R / (2·fd·z − 0.5·P) = "
                        f"{P:.3f}·{R_c:.1f} / (2·{fd_MPa:.2f}·{z:.2f} − 0.5·{P:.3f})")
-        # Buckling / shape check: thickness must be ≥ 0.001*Di for typical r/R
         t_min_shape = 0.001 * Di
         if t < t_min_shape:
             warnings.append(f"Calculated t={t:.2f} mm < 0.001·Di={t_min_shape:.2f} mm. "
