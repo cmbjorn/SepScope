@@ -109,10 +109,56 @@ table.dt tr:nth-child(even) td { background: #f7f9fc; }
     color: #92400e; font-weight: bold; font-size: 9pt;
     text-align: center; padding: 4px; margin-bottom: 9px;
 }
+/* ── Sub-section title ── */
+.sub-sec {
+    background: #2d5f8a; color: #fff;
+    font-weight: bold; font-size: 9pt;
+    padding: 2px 8px; margin: 7px 0 0;
+    letter-spacing: 0.02em;
+}
+/* ── Side-by-side head drawings ── */
+.head-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.head-wrap {
+    border: 1px solid #b0b8c4;
+    background: #fff;
+    text-align: center;
+    padding: 3px;
+}
+/* ── Per-nozzle endcap detail blocks ── */
+.nz-block {
+    border: 1px solid #dce4ef;
+    border-radius: 3px;
+    margin: 7px 0;
+    page-break-inside: avoid;
+}
+.nz-block-hdr {
+    background: #f4f6fa;
+    border-bottom: 1px solid #dce4ef;
+    font-weight: bold;
+    font-size: 9pt;
+    color: #1e3a5f;
+    padding: 3px 8px;
+}
+/* ── Implication boxes ── */
+.impl-err  { background:#fee2e2; border-left:3px solid #dc2626; padding:4px 8px; margin:3px 0; font-size:8.5pt; }
+.impl-warn { background:#fef3c7; border-left:3px solid #d97706; padding:4px 8px; margin:3px 0; font-size:8.5pt; }
+.impl-info { background:#eff6ff; border-left:3px solid #2563eb; padding:4px 8px; margin:3px 0; font-size:8.5pt; }
+/* ── Compact metric row ── */
+.metrics { display:flex; gap:12px; flex-wrap:wrap; padding:5px 8px; }
+.metric  { font-size:8.5pt; }
+.metric b { color:#1e3a5f; }
+/* ── Print ── */
 @media print {
-    body { margin: 8mm 10mm 12mm; }
+    @page { size: A4 portrait; margin: 12mm 14mm 14mm; }
+    body { margin: 0; }
     .no-print { display: none; }
-    .sec { page-break-inside: avoid; }
+    .sec, .nz-block { page-break-inside: avoid; }
+    .pb { page-break-before: always; }
 }
 """
 
@@ -153,6 +199,450 @@ def _status(ok) -> str:
     if ok is False:
         return '<span class="fail">✗ FAIL</span>'
     return '<span class="warn">— N/A</span>'
+
+# ── Endcap face-on SVG ───────────────────────────────────────────────────────
+
+def _endcap_face_svg(
+    head_type,
+    Di: float,
+    R_c: float,
+    r_k: float,
+    b: float,
+    t_head_nom: float,
+    nozzle_data: list,   # list of (nz_dict, nres)
+    title: str = "",
+    size: int = 320,
+) -> str:
+    """
+    SVG of one endcap viewed face-on (looking axially inward).
+    Zones filled, weld-exclusion ring shown, each endcap nozzle drawn
+    as a circle at its vertical position (all on x = 0 centre plane).
+    """
+    from engines.head_geometry import HeadType, _FD_CROWN_RATIO, _FD_KNUCKLE_RATIO
+    from engines.nozzle_geometry import _tori_geometry as _tg
+
+    R   = Di / 2.0
+    sc  = (size / 2 * 0.80) / R     # mm → px; R maps to 80 % of half-canvas
+    cx  = cy = size / 2.0
+    min_weld = max(3.0 * t_head_nom, 25.0)
+
+    def _px(mm):  return mm * sc
+
+    def _circ(r_mm, fill, stroke="none", sw=1.5, dash=""):
+        d = f' stroke-dasharray="{dash}"' if dash else ""
+        return (f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{_px(r_mm):.2f}" '
+                f'fill="{fill}" stroke="{stroke}" stroke-width="{sw}"{d}/>')
+
+    def _annulus(ro_mm, ri_mm, fill):
+        ro, ri = _px(ro_mm), _px(ri_mm)
+        d = (f"M{cx+ro:.2f},{cy:.2f} A{ro:.2f},{ro:.2f} 0 1 0 {cx-ro:.2f},{cy:.2f} "
+             f"A{ro:.2f},{ro:.2f} 0 1 0 {cx+ro:.2f},{cy:.2f} "
+             f"M{cx+ri:.2f},{cy:.2f} A{ri:.2f},{ri:.2f} 0 1 1 {cx-ri:.2f},{cy:.2f} "
+             f"A{ri:.2f},{ri:.2f} 0 1 1 {cx+ri:.2f},{cy:.2f}")
+        return f'<path d="{d}" fill="{fill}" fill-rule="evenodd"/>'
+
+    def _txt(x, y, s, anchor="middle", size_pt=8, color="#64748b", bold=False):
+        fw = "bold" if bold else "normal"
+        return (f'<text x="{x:.1f}" y="{y:.1f}" text-anchor="{anchor}" '
+                f'font-size="{size_pt}" font-weight="{fw}" fill="{color}" '
+                f'font-family="Arial,sans-serif">{_e(s)}</text>')
+
+    h_total = size + (18 if title else 0)
+    yoff    = 18 if title else 0
+
+    p: list[str] = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{h_total}" '
+        f'style="background:white;overflow:visible;">'
+    ]
+    if title:
+        p.append(_txt(size / 2, 13, title, size_pt=9.5, color="#1e3a5f", bold=True))
+
+    p.append(f'<g transform="translate(0,{yoff})">')
+
+    # Normalise F&D
+    _ht, _Rc, _rk = head_type, R_c, r_k
+    if _ht == HeadType.FLANGED_DISHED:
+        _ht, _Rc, _rk = HeadType.TORISPHERICAL, _FD_CROWN_RATIO * Di, _FD_KNUCKLE_RATIO * Di
+
+    # ── Zone fills ────────────────────────────────────────────────────────────
+    if _ht == HeadType.TORISPHERICAL:
+        tg    = _tg(Di, _Rc, _rk)
+        r_cj  = tg["r_cj"]
+        p.append(_circ(R,    "rgba(245,158,11,0.22)"))
+        p.append(_circ(r_cj, "rgba(34,197,94,0.28)"))
+        p.append(_circ(r_cj, "none", "#16a34a", 1.5, "5,3"))
+        p.append(_txt(cx, cy + 4, "Crown", color="#15803d"))
+        kx = cx + _px((r_cj + R) * 0.52)
+        p.append(_txt(kx, cy - _px((r_cj + R) * 0.18), "Knuckle", size_pt=7.5, color="#b45309"))
+        p.append(_txt(cx + _px(r_cj) + 3, cy - 4,
+                      f"r_cj = {r_cj:.0f} mm", anchor="start", size_pt=7, color="#15803d"))
+
+    elif _ht == HeadType.ELLIPSOIDAL:
+        _k    = max(Di / (2.0 * b), 1.001)
+        r_rev = R / math.sqrt(_k * _k - 1.0)
+        p.append(_circ(R,     "rgba(245,158,11,0.22)"))
+        p.append(_circ(r_rev, "rgba(34,197,94,0.28)"))
+        p.append(_circ(r_rev, "none", "#16a34a", 1.5, "5,3"))
+        p.append(_txt(cx, cy + 4, "Tensile zone", color="#15803d"))
+        p.append(_txt(cx + _px(r_rev) + 3, cy - 4,
+                      f"r_rev = {r_rev:.0f} mm", anchor="start", size_pt=7, color="#15803d"))
+
+    elif _ht == HeadType.HEMISPHERICAL:
+        p.append(_circ(R, "rgba(34,197,94,0.22)"))
+        p.append(_txt(cx, cy + 4, "Full face — no knuckle", color="#15803d", size_pt=7.5))
+
+    else:
+        p.append(_circ(R, "rgba(34,197,94,0.18)"))
+        p.append(_txt(cx, cy + 4, "Full face usable", color="#15803d", size_pt=7.5))
+
+    # ── Weld-exclusion ring ───────────────────────────────────────────────────
+    r_excl = R - min_weld
+    if r_excl > 5:
+        p.append(_annulus(R, r_excl, "rgba(220,38,38,0.10)"))
+        p.append(_circ(r_excl, "none", "#dc2626", 0.9, "4,2"))
+        # label
+        ang = math.radians(42)
+        lx  = cx + _px(r_excl + min_weld * 0.5) * math.cos(ang)
+        ly  = cy - _px(r_excl + min_weld * 0.5) * math.sin(ang)
+        p.append(_txt(lx, ly, f"Weld excl. ≥{min_weld:.0f}", size_pt=6.5, color="#dc2626"))
+
+    # ── Inner wall ────────────────────────────────────────────────────────────
+    p.append(_circ(R, "none", "#1d4ed8", 2.5))
+    p.append(_txt(cx, cy - _px(R) + 9, f"Di = {Di:.0f} mm", size_pt=7.5, color="#475569"))
+
+    # ── Axis cross ────────────────────────────────────────────────────────────
+    dc = _px(R) * 0.055
+    p.append(f'<line x1="{cx-dc:.1f}" y1="{cy:.1f}" x2="{cx+dc:.1f}" y2="{cy:.1f}" '
+             f'stroke="#94a3b8" stroke-width="0.8"/>')
+    p.append(f'<line x1="{cx:.1f}" y1="{cy-dc:.1f}" x2="{cx:.1f}" y2="{cy+dc:.1f}" '
+             f'stroke="#94a3b8" stroke-width="0.8"/>')
+
+    # ── Nozzles ───────────────────────────────────────────────────────────────
+    _NSTROKE = {"ok": "#16a34a", "warn": "#d97706", "fail": "#dc2626"}
+    _NFILL   = {
+        "ok":   "rgba(34,197,94,0.20)",
+        "warn": "rgba(245,158,11,0.22)",
+        "fail": "rgba(220,38,38,0.20)",
+    }
+    for nz, nres in nozzle_data:
+        if not nres.geom_ok or nres.code_ok is False:  ck = "fail"
+        elif nres.zone == "knuckle" or nres.code_ok is None: ck = "warn"
+        else: ck = "ok"
+        nc, nf = _NSTROKE[ck], _NFILL[ck]
+
+        ny_px  = cy - nres.y_nozzle_mm * sc   # SVG y inverted
+        nOR_px = _px(nres.nozzle_OR_mm)
+        bOR_px = _px(max(nres.nozzle_OD_mm - 2 * nres.nozzle_t_mm, 1.0) / 2.0)
+
+        p.append(f'<circle cx="{cx:.1f}" cy="{ny_px:.1f}" r="{nOR_px:.2f}" '
+                 f'fill="{nf}" stroke="{nc}" stroke-width="2"/>')
+        p.append(f'<circle cx="{cx:.1f}" cy="{ny_px:.1f}" r="{bOR_px:.2f}" '
+                 f'fill="none" stroke="{nc}" stroke-width="0.9" stroke-dasharray="3,2"/>')
+        # tag label — place above OD circle
+        lbl_y = ny_px - nOR_px - 3
+        p.append(f'<text x="{cx:.1f}" y="{lbl_y:.1f}" text-anchor="middle" '
+                 f'font-size="8.5" font-weight="bold" fill="{nc}" '
+                 f'font-family="Arial,sans-serif">{_e(nz["tag"])}</text>')
+
+    p.append('</g>')
+
+    # ── Bottom legend ─────────────────────────────────────────────────────────
+    items = [
+        ("rgba(34,197,94,0.5)",    "Crown / full-face (std. analysis)"),
+        ("rgba(245,158,11,0.5)",   "Knuckle / compressive zone"),
+        ("rgba(220,38,38,0.15)",   "Weld-exclusion ring"),
+    ]
+    lx0 = 4
+    ly0 = h_total - 3 - len(items) * 11
+    for col, lbl in items:
+        p.append(f'<rect x="{lx0}" y="{ly0-7:.1f}" width="9" height="8" '
+                 f'fill="{col}" rx="1"/>')
+        p.append(f'<text x="{lx0+13}" y="{ly0:.1f}" font-size="7" fill="#64748b" '
+                 f'font-family="Arial,sans-serif">{_e(lbl)}</text>')
+        ly0 += 11
+
+    p.append('</svg>')
+    return '\n'.join(p)
+
+
+# ── Endcap nozzle analysis section ───────────────────────────────────────────
+
+_ENDCAP_ALT_HEADS = [
+    ("Hemispherical",             "Hemispherical",                  {}),
+    ("Ellipsoidal 2:1",           "Ellipsoidal 2:1",                {"ellipse_ratio": 2.0}),
+    ("Tori — Klöpper (r=0.10Di)","Torispherical (dished)",          {"crown_ratio": 1.0, "knuckle_ratio": 0.10}),
+    ("F&D ASME (r=0.06Di)",      "Flanged & Dished (ASME F&D)",    {}),
+    ("Conical 30°",               "Conical",                        {"alpha_deg_cone": 30.0}),
+    ("Flat",                      "Flat (unstayed)",                {}),
+]
+
+
+def _endcap_analysis_html(
+    nozzle_results: list,
+    Di: float,
+    head_type,
+    crown_ratio: float,
+    knuckle_ratio: float,
+    alpha_deg_cone: float,
+    ellipse_ratio: float,
+    t_head_nom: float,
+    code_key: str,
+    h_head: float = 0.0,
+) -> str:
+    """
+    Full endcap analysis section: face-on SVG drawings, summary table,
+    and per-nozzle detail with alternative head type comparison.
+    Returns an HTML string (one complete <div class="sec"> block).
+    """
+    from engines.head_geometry import HeadType, _FD_CROWN_RATIO, _FD_KNUCKLE_RATIO
+    from engines.nozzle_geometry import nozzle_on_head, NOZZLE_OD, NOZZLE_WALL_T
+
+    code = "EN 13445-3" if code_key == "EN" else "ASME VIII Div.1"
+    R    = Di / 2.0
+    min_weld = max(3.0 * t_head_nom, 25.0)
+
+    R_c = crown_ratio * Di
+    r_k = knuckle_ratio * Di
+    b   = Di / (2.0 * ellipse_ratio)
+
+    # Filter to head nozzles only
+    head_nz = [(nz, nres, rres) for nz, nres, rres, *_ in nozzle_results
+               if nres is not None]
+    if not head_nz:
+        return ""
+
+    left_nz  = [(nz, nres) for nz, nres, _ in head_nz if nz["loc"] == "Left head"]
+    right_nz = [(nz, nres) for nz, nres, _ in head_nz if nz["loc"] == "Right head"]
+
+    html: list[str] = ['<div class="sec pb">',
+                       '<div class="sec-title">G.1 — Endcap Nozzle Analysis</div>']
+
+    # ── Face-on drawings ──────────────────────────────────────────────────────
+    if left_nz or right_nz:
+        html.append('<div class="head-pair">')
+        for side_data, side_title in ((left_nz, "Left head — face-on view"),
+                                      (right_nz, "Right head — face-on view")):
+            svg_str = _endcap_face_svg(
+                head_type, Di, R_c, r_k, b, t_head_nom,
+                side_data, title=side_title, size=320,
+            )
+            html.append(f'<div class="head-wrap">{svg_str}</div>')
+        html.append('</div>')
+
+    # ── Summary table ─────────────────────────────────────────────────────────
+    html.append(
+        '<p style="font-size:8pt;color:#555;margin:3px 0 4px">'
+        'All nozzles on the vertical centre plane of the head (horizontal x = 0). '
+        f'Weld clearance minimum = max(3×t_head, 25 mm) = {min_weld:.0f} mm. '
+        'Zone: Crown = standard analysis valid; Knuckle = specialist analysis required.'
+        '</p>'
+    )
+    sum_hdrs = ["Tag", "Side", "DN (OD mm)", "From top", "r / R",
+                "Zone", "Edge → wall", "Edge → bnd", "Depth / Head depth",
+                "Geom", "Code", "Reinf"]
+    sum_rows = []
+    for nz, nres, rres in head_nz:
+        r = nres.r_from_axis_mm
+        e2w_ok  = nres.edge_to_shell_mm >= min_weld
+        e2k_str = (f"{nres.edge_to_knuckle_mm:.0f} mm"
+                   if nres.edge_to_knuckle_mm is not None else "—")
+        geom_s  = '<span class="ok">✓</span>' if nres.geom_ok else '<span class="fail">✗</span>'
+        code_s  = ('<span class="ok">✓</span>'  if nres.code_ok is True else
+                   '<span class="warn">?</span>' if nres.code_ok is None else
+                   '<span class="fail">✗</span>')
+        reinf_s = ('<span class="ok">✓</span>'  if (rres and rres.adequate is True) else
+                   '<span class="warn">?</span>' if (rres and rres.adequate is None) else
+                   '<span class="fail">✗</span>')
+        e2w_cls = "" if e2w_ok else ' style="color:#dc2626;font-weight:bold"'
+        depth_s = f"{nres.z_on_head_mm:.0f} / {nres.head_depth_mm:.0f} mm"
+        sum_rows.append([
+            f"<b>{nz['tag']}</b>", nz["loc"],
+            f"DN{nz['dn']} ({nres.nozzle_OD_mm:.1f})",
+            f"{nres.d_from_top_mm:.0f} mm",
+            f"{r/R:.2f}",
+            nres.zone.replace("_", " ").capitalize(),
+            f'<span{e2w_cls}>{nres.edge_to_shell_mm:.0f} mm</span>',
+            e2k_str, depth_s, geom_s, code_s, reinf_s,
+        ])
+    html.append(_dt(sum_hdrs, sum_rows))
+
+    # ── Per-nozzle detail ─────────────────────────────────────────────────────
+    for nz, nres, rres in head_nz:
+        r    = nres.r_from_axis_mm
+        nOR  = nres.nozzle_OR_mm
+        bore = max(nres.nozzle_OD_mm - 2 * nres.nozzle_t_mm, 1.0)
+        bore_ratio = bore / Di
+
+        html.append('<div class="nz-block">')
+        html.append(f'<div class="nz-block-hdr">'
+                    f'{_e(nz["tag"])} — {_e(nz["service"])} &nbsp;|&nbsp; '
+                    f'DN{nz["dn"]} &nbsp;|&nbsp; {_e(nz["loc"])}'
+                    f'</div>')
+        html.append('<div style="padding:5px 8px">')
+
+        # Key metrics bar
+        html.append('<div class="metrics">')
+        metrics = [
+            ("r / R", f"{r/R:.3f}"),
+            ("Nozzle edge / R", f"{(r+nOR)/R:.3f}"),
+            ("Edge → shell wall", f"{nres.edge_to_shell_mm:.0f} mm"
+             + (" ✓" if nres.edge_to_shell_mm >= min_weld else f" ✗ < {min_weld:.0f} mm")),
+            ("Zone", nres.zone.replace("_", " ").capitalize()),
+            ("Axial depth", f"{nres.z_on_head_mm:.0f} / {nres.head_depth_mm:.0f} mm"),
+            ("Bore / Di", f"{bore_ratio:.1%}"),
+        ]
+        if nres.edge_to_knuckle_mm is not None:
+            metrics.append(("Edge → crown bnd",
+                            f"{nres.edge_to_knuckle_mm:.0f} mm"
+                            + (" ✓" if nres.edge_to_knuckle_mm >= 0 else " ✗")))
+        for k, v in metrics:
+            html.append(f'<span class="metric"><b>{_e(k)}:</b> {_e(v)}</span>')
+        html.append('</div>')
+
+        # Reinforcement summary
+        if rres is not None:
+            surplus = rres.A_total_mm2 - rres.A_required_mm2
+            cls = "ok" if surplus >= 0 else "fail"
+            html.append(
+                f'<p style="font-size:8.5pt;margin:3px 0">'
+                f'Reinforcement: A_req = {rres.A_required_mm2:,.0f} mm²  '
+                f'A_avail = {rres.A_total_mm2:,.0f} mm²  '
+                f'<span class="{cls}">{"surplus" if surplus>=0 else "deficit"} '
+                f'{abs(surplus):,.0f} mm²</span>'
+                f'</p>'
+            )
+
+        # Engineering implications
+        impl: list[tuple[str, str]] = []
+
+        if nres.edge_to_shell_mm < 0:
+            impl.append(("err",
+                f"OD overlaps shell wall by {-nres.edge_to_shell_mm:.0f} mm — "
+                "not buildable. Move toward axis or use smaller DN."))
+        elif nres.edge_to_shell_mm < min_weld:
+            impl.append(("warn",
+                f"Weld clearance {nres.edge_to_shell_mm:.0f} mm &lt; min {min_weld:.0f} mm "
+                f"(max(3·t_head, 25 mm), {code} cl. {'5.6' if code_key=='EN' else 'UW-11'}). "
+                "Adjacent weld-heat zones overlap — PWHT and NDT compromised. "
+                "Move toward axis, use hemispherical head, or obtain fabrication deviation."))
+
+        if nres.zone == "knuckle":
+            if head_type in (HeadType.TORISPHERICAL, HeadType.FLANGED_DISHED):
+                impl.append(("err",
+                    f"Nozzle centre in knuckle zone — standard area-replacement "
+                    f"({code} {'cl.9 / UG-37' if code_key=='EN' else 'UG-37'}) is NOT valid. "
+                    "Move to crown zone, use hemispherical head, or commission FEA."))
+            elif head_type == HeadType.ELLIPSOIDAL:
+                impl.append(("warn",
+                    "Nozzle in compressive-hoop zone — standard area-replacement is "
+                    "non-conservative. Detailed analysis or FEA required."))
+
+        elif nres.edge_to_knuckle_mm is not None and nres.edge_to_knuckle_mm < 0:
+            impl.append(("warn",
+                f"OD edge encroaches on crown/knuckle boundary by "
+                f"{-nres.edge_to_knuckle_mm:.0f} mm — reinforcement limit zone "
+                "partially in non-standard region; A_available overstated."))
+
+        if 0 < nres.edge_to_shell_mm < 0.5 * (Di * 0.10):
+            impl.append(("warn",
+                "3-way stress interaction (nozzle + head/shell discontinuity + hoop) "
+                "at this proximity — outside standard code formulas even if weld "
+                "clearance is met. Full 3D FEA required."))
+
+        if bore_ratio > 0.5:
+            impl.append(("err",
+                f"Bore/Di = {bore_ratio:.0%} &gt; 50 % — pressure-area method or FEA "
+                "mandatory; reinforcing insert likely needed."))
+        elif bore_ratio > 1/3:
+            impl.append(("warn",
+                f"Bore/Di = {bore_ratio:.0%} &gt; 33 % — enhanced reinforcement check "
+                "required; confirm limit zone stays within crown."))
+
+        # Existing nres warnings / errors (avoid duplicates)
+        existing_msgs = {m[:40] for _, m in impl}
+        for w in nres.warnings + nres.errors:
+            if w[:40] not in existing_msgs:
+                impl.append(("warn" if w in nres.warnings else "err", w))
+
+        if impl:
+            html.append('<div style="margin-top:4px">')
+            for lvl, msg in impl:
+                cls = "impl-err" if lvl == "err" else "impl-warn" if lvl == "warn" else "impl-info"
+                icon = "🚫" if lvl == "err" else "⚠" if lvl == "warn" else "ℹ"
+                html.append(f'<div class="{cls}">{icon} {msg}</div>')
+            html.append('</div>')
+        else:
+            html.append('<div class="impl-info">ℹ No edge-proximity issues detected for this nozzle.</div>')
+
+        # Alternative head type comparison table
+        html.append('<div class="sub-sec" style="margin-top:6px">Alternative head type comparison</div>')
+        alt_hdrs = ["Head type", "Zone", "Code", "Edge → wall", "Edge → bnd",
+                    "Crown limit", "Head depth", "Notes"]
+        alt_rows = []
+        for label, ht_label, override_kw in _ENDCAP_ALT_HEADS:
+            kw = dict(
+                crown_ratio=crown_ratio, knuckle_ratio=knuckle_ratio,
+                alpha_deg_cone=alpha_deg_cone, ellipse_ratio=ellipse_ratio,
+                nozzle_OD_mm=nres.nozzle_OD_mm, nozzle_t_mm=nres.nozzle_t_mm,
+                t_head_nom_mm=t_head_nom,
+            )
+            kw.update(override_kw)
+            # Resolve head type enum from label
+            from engines.head_geometry import HeadType as _HT
+            _ht_map = {
+                "Hemispherical": _HT.HEMISPHERICAL,
+                "Ellipsoidal 2:1": _HT.ELLIPSOIDAL,
+                "Torispherical (dished)": _HT.TORISPHERICAL,
+                "Flanged & Dished (ASME F&D)": _HT.FLANGED_DISHED,
+                "Conical": _HT.CONICAL,
+                "Flat (unstayed)": _HT.FLAT,
+            }
+            ht_enum = _ht_map[ht_label]
+            try:
+                ar = nozzle_on_head(ht_enum, Di, nres.d_from_top_mm, nz["dn"], **kw)
+            except Exception:
+                continue
+
+            is_cur = ht_enum == head_type
+            cur_mark = "▶ " if is_cur else ""
+            zone_s = ar.zone.replace("_", " ").capitalize()
+            code_s  = ("✓ OK"  if ar.code_ok is True else
+                       "? Check" if ar.code_ok is None else "✗ FAIL")
+            e2w_s   = f"{ar.edge_to_shell_mm:.0f} mm"
+            e2k_s   = (f"{ar.edge_to_knuckle_mm:.0f} mm"
+                       if ar.edge_to_knuckle_mm is not None else "—")
+            clim_s  = (f"≤{ar.d_at_crown_end_mm:.0f} mm from top"
+                       if ar.d_at_crown_end_mm is not None else "—")
+            depth_s = f"{ar.head_depth_mm:.0f} mm"
+            # Short note
+            notes_map = {
+                "Hemispherical":            "No knuckle — full face",
+                "Ellipsoidal 2:1":          "Reversal at r≈0.58R",
+                "Tori — Klöpper (r=0.10Di)":"r_cj ≈ 0.80R",
+                "F&D ASME (r=0.06Di)":      "r_cj ≈ 0.86R (larger crown)",
+                "Conical 30°":              "No knuckle; apex check needed",
+                "Flat":                     "No curvature; thick plate",
+            }
+            note_s = notes_map.get(label, "")
+
+            alt_rows.append([
+                f"{cur_mark}{_e(label)}", zone_s, code_s,
+                e2w_s, e2k_s, clim_s, depth_s, note_s,
+            ])
+        html.append(_dt(alt_hdrs, alt_rows))
+        html.append(
+            '<p style="font-size:7.5pt;color:#64748b;margin:2px 0">'
+            "▶ = currently selected head type &nbsp;·&nbsp; "
+            "Alternative heads use standard default geometry &nbsp;·&nbsp; "
+            "? = detailed analysis required"
+            '</p>'
+        )
+
+        html.append('</div></div>')   # close padding div + nz-block
+
+    html.append('</div>')  # close .sec
+    return '\n'.join(html)
+
 
 # ── SVG Sketch ────────────────────────────────────────────────────────────────
 
@@ -408,6 +898,12 @@ def generate_datasheet_html(
     ldv_result: dict | None = None,
     Z_gas: float = 1.0,
     lining_spec: dict | None = None,
+    # Head geometry — needed for endcap drawings and analysis
+    head_type=None,          # HeadType enum (None → skip endcap analysis)
+    crown_ratio: float = 1.0,
+    knuckle_ratio: float = 0.10,
+    alpha_deg_cone: float = 30.0,
+    ellipse_ratio: float = 2.0,
 ) -> str:
     from engines.nozzle_geometry import NOZZLE_OD, NOZZLE_WALL_T, NOZZLE_WALL_SCH, recommended_schedule
     import math as _m
@@ -960,6 +1456,22 @@ def generate_datasheet_html(
                  f'<div style="margin:6px 0 3px"><b>General Notes:</b></div>'
                  f'{notes_html}')
 
+    # ── G.1  Endcap nozzle analysis ───────────────────────────────────────────
+    sec_g1 = ""
+    if head_type is not None:
+        sec_g1 = _endcap_analysis_html(
+            nozzle_results=nozzle_results,
+            Di=Di,
+            head_type=head_type,
+            crown_ratio=crown_ratio,
+            knuckle_ratio=knuckle_ratio,
+            alpha_deg_cone=alpha_deg_cone,
+            ellipse_ratio=ellipse_ratio,
+            t_head_nom=head_res.t_nom_mm,
+            code_key=code_key,
+            h_head=h_head,
+        )
+
     # ── FOOTER ────────────────────────────────────────────────────────────────
     not_for_construction = issued_for not in ("Construction",)
     footer_warn = (
@@ -976,7 +1488,7 @@ def generate_datasheet_html(
     body = (
         header_html + banner + sketch_html
         + sec_a + sec_b + sec_c + sec_d
-        + sec_e + sec_f + sec_g + sec_h
+        + sec_e + sec_f + sec_g + sec_g1 + sec_h
         + footer
     )
 

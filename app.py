@@ -3142,6 +3142,11 @@ def main():
             ldv_result=_ldv_result,
             Z_gas=Z_gas,
             lining_spec=lining_spec,
+            head_type=head_type,
+            crown_ratio=crown_ratio,
+            knuckle_ratio=knuckle_ratio,
+            alpha_deg_cone=alpha_deg_cone,
+            ellipse_ratio=ellipse_ratio,
         ).encode("utf-8")
         st.session_state["report_fname"] = (
             f"datasheet_{vessel_tag.replace(' ','_')}_{_date.today().isoformat()}.html"
@@ -3183,6 +3188,11 @@ def main():
             ldv_result=_ldv_result,
             Z_gas=Z_gas,
             lining_spec=lining_spec,
+            head_type=head_type,
+            crown_ratio=crown_ratio,
+            knuckle_ratio=knuckle_ratio,
+            alpha_deg_cone=alpha_deg_cone,
+            ellipse_ratio=ellipse_ratio,
         )
         st.session_state["report_docx_fname"] = (
             f"design_report_{vessel_tag.replace(' ','_')}_{_date.today().isoformat()}.docx"
