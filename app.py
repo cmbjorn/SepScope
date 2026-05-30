@@ -438,8 +438,8 @@ def _vessel_figure(
     _y_nz_bot = -R   # lowest point
 
     def _nozzle_w(nOR_mm: float) -> float:
-        """Display half-width for a nozzle stub — capped so large nozzles stay legible."""
-        return min(nOR_mm, Di * 0.045)
+        """True nozzle half-width (OD radius) for 1:1-scale drawing."""
+        return nOR_mm
 
     for nz_cfg, nres, rres in nozzle_results:
         loc = nz_cfg["loc"]
@@ -475,9 +475,9 @@ def _vessel_figure(
             # ── Head nozzle: rectangular stub projecting axially outward ──────
             nx   = -nres.z_on_head_mm if loc == "Left head" else L_shell + nres.z_on_head_mm
             ny   = nres.y_nozzle_mm
-            hw   = _nozzle_w(nres.nozzle_OR_mm)    # half-width (capped)
+            hw   = _nozzle_w(nres.nozzle_OR_mm)    # true OD radius (1:1 scale)
             sign = -1.0 if loc == "Left head" else 1.0
-            stub = max(hw * 2.0, 50.0)
+            stub = max(hw * 1.2, 30.0)             # ~1.2 × OD radius projection
             x_tip = nx + sign * stub
             hover += (
                 f"<br>From top: {nres.d_from_top_mm:.0f} mm"
@@ -527,7 +527,7 @@ def _vessel_figure(
             sign   = 1.0 if loc == "Shell — top" else -1.0
             y_wall = sign * R
             hw     = _nozzle_w(nOR)
-            stub   = max(hw * 2.0, 45.0)
+            stub   = max(hw * 1.2, 30.0)           # ~1.2 × OD radius projection
             y_tip  = y_wall + sign * stub
             # Nozzle body (rectangle, drawn as Scatter so it renders above zone fills)
             fig.add_trace(go.Scatter(
@@ -578,8 +578,8 @@ def _vessel_figure(
             # Side nozzles project perpendicular to the page; in side view they
             # appear as circles centred on the vessel horizontal axis.
             nx    = nz_cfg["axial_mm"]
-            cr    = min(nOR * 0.65, 20.0)
-            bore_r = cr * 0.55
+            cr    = nOR                             # true OD radius (end-on circle)
+            bore_r = cr * 0.85                      # approximate bore radius
             fig.add_trace(go.Scatter(
                 x=[nx + cr * math.cos(t) for t in theta_pts],
                 y=[cr * math.sin(t) for t in theta_pts],

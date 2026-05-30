@@ -419,6 +419,11 @@ def generate_word_report(
     ldv_result: dict | None = None,
     Z_gas: float = 1.0,
     lining_spec: dict | None = None,
+    head_type=None,           # accepted but unused — reserved for future endcap section
+    crown_ratio: float = 1.0,
+    knuckle_ratio: float = 0.10,
+    alpha_deg_cone: float = 30.0,
+    ellipse_ratio: float = 2.0,
 ) -> bytes:
     """Generate a comprehensive Word design report. Returns raw .docx bytes."""
     from engines.nozzle_geometry import NOZZLE_OD, NOZZLE_WALL_T, NOZZLE_WALL_SCH, recommended_schedule
