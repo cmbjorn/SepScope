@@ -420,18 +420,27 @@ def _vessel_figure(
     fig.add_vline(x=L_shell, line=dict(color="#94a3b8", dash="dot", width=1))
     fig.add_hline(y=0,       line=dict(color="#e2e8f0", width=1, dash="dot"))
 
-    # ── Nozzles (all) ────────────────────────────────────────────────────────
-    # Head nozzles: circle in the head plane (cross-section view).
-    # Shell top/bottom nozzles: rectangular stub projecting from the vessel wall.
-    # Shell side nozzles: small circle centred on the vessel wall (end-on projection).
+    # ── Nozzles ───────────────────────────────────────────────────────────────
+    # Convention:
+    #   Head nozzles       → rectangular stub projecting axially outward
+    #   Shell top/bottom   → rectangular stub projecting radially (engineering elevation style)
+    #   Shell side         → concentric circles at centreline (end-on view, they project ⊥ to page)
     theta_pts = [i / 30 * 2 * math.pi for i in range(31)]
+
+    # Pre-compute max nozzle protrusion above/below vessel for dynamic y_lim (set later).
+    _y_nz_top = R    # highest point of any nozzle or label above vessel axis
+    _y_nz_bot = -R   # lowest point
+
+    def _nozzle_w(nOR_mm: float) -> float:
+        """Display half-width for a nozzle stub — capped so large nozzles stay legible."""
+        return min(nOR_mm, Di * 0.045)
 
     for nz_cfg, nres, rres in nozzle_results:
         loc = nz_cfg["loc"]
         dn  = nz_cfg["dn"]
         nOR = NOZZLE_OD.get(dn, dn * 1.05) / 2.0
 
-        # Colour
+        # ── Status colour ─────────────────────────────────────────────────────
         geom_ok  = nres.geom_ok if nres else True
         code_ok  = nres.code_ok if nres else None
         reinf_ok = rres.adequate if rres else True
@@ -448,50 +457,33 @@ def _vessel_figure(
         )
 
         if loc in ("Left head", "Right head") and nres is not None:
-            # ── Head nozzle: horizontal stub projecting axially outward ───────
-            # Use Scatter traces (not add_shape) so they render ON TOP of zone fills.
-            nx  = -nres.z_on_head_mm if loc == "Left head" else L_shell + nres.z_on_head_mm
-            ny  = nres.y_nozzle_mm
-            nOR = nres.nozzle_OR_mm
+            # ── Head nozzle: rectangular stub projecting axially outward ──────
+            nx   = -nres.z_on_head_mm if loc == "Left head" else L_shell + nres.z_on_head_mm
+            ny   = nres.y_nozzle_mm
+            hw   = _nozzle_w(nres.nozzle_OR_mm)    # half-width (capped)
+            sign = -1.0 if loc == "Left head" else 1.0
+            stub = max(hw * 2.0, 50.0)
+            x_tip = nx + sign * stub
             hover += (
                 f"<br>From top: {nres.d_from_top_mm:.0f} mm"
                 f"<br>Zone: {nres.zone}"
             )
-            sign   = -1.0 if loc == "Left head" else 1.0
-            stub_l = max(90.0, nOR * 1.8)
-            fl_ext = max(12.0, nOR * 0.4)
-            bore_r = nOR * 0.65
-            x_tip  = nx + sign * stub_l
-
+            # Nozzle body (rectangle)
             bx0, bx1 = min(nx, x_tip), max(nx, x_tip)
-
-            # Barrel (filled Scatter polygon — visible above zone fills)
             fig.add_trace(go.Scatter(
                 x=[bx0, bx1, bx1, bx0, bx0],
-                y=[ny-nOR, ny-nOR, ny+nOR, ny+nOR, ny-nOR],
+                y=[ny - hw, ny - hw, ny + hw, ny + hw, ny - hw],
                 fill="toself", fillcolor=nfill,
                 line=dict(color=nc, width=1.5),
                 showlegend=False, hovertemplate=hover + "<extra></extra>",
             ))
-            # Bore (white fill, dashed border)
-            fig.add_trace(go.Scatter(
-                x=[bx0, bx1, bx1, bx0, bx0],
-                y=[ny-bore_r, ny-bore_r, ny+bore_r, ny+bore_r, ny-bore_r],
-                fill="toself", fillcolor="rgba(255,255,255,0.9)",
-                line=dict(color=nc, width=0.8, dash="dot"),
-                showlegend=False, hoverinfo="skip",
-            ))
-            # Flange plate (wider rect at tip)
-            fig.add_trace(go.Scatter(
-                x=[x_tip-7, x_tip+7, x_tip+7, x_tip-7, x_tip-7],
-                y=[ny-nOR-fl_ext, ny-nOR-fl_ext, ny+nOR+fl_ext, ny+nOR+fl_ext, ny-nOR-fl_ext],
-                fill="toself", fillcolor=nfill,
-                line=dict(color=nc, width=1.5),
-                showlegend=False, hoverinfo="skip",
-            ))
-            # Tag label outside the flange
+            # Flange face (bold line at tip)
+            fig.add_shape(type="line", x0=x_tip, x1=x_tip,
+                          y0=ny - hw - 6, y1=ny + hw + 6,
+                          line=dict(color=nc, width=3))
+            # Tag label outside
             fig.add_annotation(
-                x=x_tip + sign * 14, y=ny,
+                x=x_tip + sign * 12, y=ny,
                 text=f"<b>{nz_cfg['tag']}</b>",
                 showarrow=False,
                 xanchor="left" if sign > 0 else "right", yanchor="middle",
@@ -500,61 +492,63 @@ def _vessel_figure(
             )
 
         elif loc in ("Shell — top", "Shell — bottom"):
-            # ── Shell top/bottom: stub line + circle ──────────────────────────
+            # ── Shell top/bottom: rectangular stub (elevation view) ───────────
             nx     = nz_cfg["axial_mm"]
             sign   = 1.0 if loc == "Shell — top" else -1.0
             y_wall = sign * R
-            disp_r = min(nOR, R * 0.28)           # cap display radius
-            stub_h = disp_r * 1.6 + 12            # stub length
-            y_ctr  = y_wall + sign * stub_h       # circle centre
-
-            fig.add_shape(type="line", x0=nx, x1=nx,
-                          y0=y_wall, y1=y_ctr,
-                          line=dict(color=nc, width=max(1.5, nOR * 0.025)))
+            hw     = _nozzle_w(nOR)
+            stub   = max(hw * 2.0, 45.0)
+            y_tip  = y_wall + sign * stub
+            # Nozzle body (rectangle, drawn as Scatter so it renders above zone fills)
             fig.add_trace(go.Scatter(
-                x=[nx + disp_r * math.cos(t) for t in theta_pts],
-                y=[y_ctr + disp_r * math.sin(t) for t in theta_pts],
+                x=[nx - hw, nx + hw, nx + hw, nx - hw, nx - hw],
+                y=[y_wall, y_wall, y_tip, y_tip, y_wall],
                 fill="toself", fillcolor=nfill,
                 line=dict(color=nc, width=1.5),
-                showlegend=False,
-                hovertemplate=hover + "<extra></extra>",
+                showlegend=False, hovertemplate=hover + "<extra></extra>",
             ))
+            # Flange face (bold horizontal line at tip)
+            fig.add_shape(type="line",
+                          x0=nx - hw - 6, x1=nx + hw + 6,
+                          y0=y_tip, y1=y_tip,
+                          line=dict(color=nc, width=3))
+            # Tag label
             fig.add_annotation(
-                x=nx, y=y_ctr + sign * (disp_r + 12),
+                x=nx, y=y_tip + sign * 12,
                 text=f"<b>{nz_cfg['tag']}</b>",
                 showarrow=False, xanchor="center",
                 yanchor="bottom" if sign > 0 else "top",
                 font=dict(size=9, color=nc),
                 bgcolor="rgba(255,255,255,0.75)", borderpad=1,
             )
+            # Track for y_lim
+            extent = y_tip + sign * 22  # label clearance
+            _y_nz_top = max(_y_nz_top, extent if sign > 0 else -extent + Di)
+            _y_nz_bot = min(_y_nz_bot, -abs(extent) if sign < 0 else _y_nz_bot)
 
         else:
-            # ── Shell side: circles on both vessel walls (end-on projection) ─
-            # Side nozzles project perpendicular to the side-view plane.
-            # Shown as small concentric circles on the top and bottom vessel walls.
+            # ── Shell side: concentric circles at y=0 (end-on in elevation) ──
+            # Side nozzles project perpendicular to the page; in side view they
+            # appear as circles centred on the vessel horizontal axis.
             nx    = nz_cfg["axial_mm"]
-            cr    = nOR * 0.7   # displayed radius (slightly smaller)
-            bore_r = cr * 0.65
-            for wall_sign in (1, -1):
-                wy = wall_sign * R
-                fig.add_trace(go.Scatter(
-                    x=[nx + cr * math.cos(t) for t in theta_pts],
-                    y=[wy + cr * math.sin(t) for t in theta_pts],
-                    fill="toself", fillcolor=nfill,
-                    line=dict(color=nc, width=1.5), showlegend=False,
-                    hovertemplate=(hover + "<extra></extra>") if wall_sign == 1 else None,
-                    hoverinfo="skip" if wall_sign != 1 else None,
-                ))
-                # Inner bore circle
-                fig.add_trace(go.Scatter(
-                    x=[nx + bore_r * math.cos(t) for t in theta_pts],
-                    y=[wy + bore_r * math.sin(t) for t in theta_pts],
-                    fill="toself", fillcolor="rgba(255,255,255,0.9)",
-                    line=dict(color=nc, width=0.8, dash="dot"), showlegend=False,
-                    hoverinfo="skip",
-                ))
+            cr    = min(nOR * 0.65, 20.0)
+            bore_r = cr * 0.55
+            fig.add_trace(go.Scatter(
+                x=[nx + cr * math.cos(t) for t in theta_pts],
+                y=[cr * math.sin(t) for t in theta_pts],
+                fill="toself", fillcolor=nfill,
+                line=dict(color=nc, width=1.5), showlegend=False,
+                hovertemplate=hover + "<extra></extra>",
+            ))
+            fig.add_trace(go.Scatter(
+                x=[nx + bore_r * math.cos(t) for t in theta_pts],
+                y=[bore_r * math.sin(t) for t in theta_pts],
+                fill="toself", fillcolor="rgba(255,255,255,0.9)",
+                line=dict(color=nc, width=0.8, dash="dot"), showlegend=False,
+                hoverinfo="skip",
+            ))
             fig.add_annotation(
-                x=nx, y=R + cr + 14,
+                x=nx, y=cr + 10,
                 text=f"<b>{nz_cfg['tag']}</b>",
                 showarrow=False, xanchor="center", yanchor="bottom",
                 font=dict(size=9, color=nc),
@@ -628,22 +622,16 @@ def _vessel_figure(
             if _nzc.get("service") == "Gas outlet" and _nzc["loc"] not in ("Left head", "Right head"):
                 _go_ax = _nzc["axial_mm"]
                 break
-        pad_thick   = 120.0                          # axial thickness of pad (mm)
-        y_nll_diag  = max(-R, min(R, nll_mm - R))   # NLL in axis-centred coords
+        pad_thick  = 100.0
+        y_nll_diag = max(-R, min(R, nll_mm - R))
         pad_x0 = _go_ax - pad_thick / 2
         pad_x1 = _go_ax + pad_thick / 2
-        pad_y0 = y_nll_diag                          # base of pad at liquid surface
-        pad_y1 = R                                   # top = vessel inner wall
-        # Main pad rectangle
+        pad_y0 = y_nll_diag
+        pad_y1 = R
+        # Draw mesh pad as a simple outlined rectangle with light fill — no busy hatching
         fig.add_shape(type="rect", x0=pad_x0, x1=pad_x1, y0=pad_y0, y1=pad_y1,
-                      fillcolor="rgba(16,185,129,0.25)",
-                      line=dict(color="#059669", width=1.5))
-        # Horizontal hatch lines inside pad
-        _hy = pad_y0 + 40
-        while _hy < pad_y1:
-            fig.add_shape(type="line", x0=pad_x0, x1=pad_x1, y0=_hy, y1=_hy,
-                          line=dict(color="rgba(5,150,105,0.40)", width=1))
-            _hy += 40
+                      fillcolor="rgba(16,185,129,0.15)",
+                      line=dict(color="#059669", width=2, dash="dot"))
         fig.add_annotation(x=_go_ax, y=pad_y1 + 14,
                            text="Mesh pad", showarrow=False, xanchor="center",
                            yanchor="bottom", font=dict(size=9, color="#059669"),
@@ -779,8 +767,11 @@ def _vessel_figure(
     saddle_depth = (saddle_h + saddle_base_h + 60) if saddle_a_mm > 0 else 0
     x_min = -(h_head + 180)
     x_max = L_shell + h_head + 180
-    y_lim = R + max(t_shell_nom, 30) + 100   # extra room for dimension line + baffle labels
-    y_lim_bot = R + max(t_shell_nom, 30) + max(100, saddle_depth)
+    # y_lim must clear the tallest nozzle stub + label above the vessel axis.
+    # _y_nz_top was updated during the nozzle loop; add 30 mm breathing room.
+    _base_top = R + max(t_shell_nom, 20) + 130   # baffle labels + mesh pad annotation
+    y_lim     = max(_base_top, _y_nz_top + 30)
+    y_lim_bot = R + max(t_shell_nom, 20) + max(130, saddle_depth)
 
     fig.update_layout(
         height=650,
