@@ -1160,6 +1160,10 @@ def main():
         L_shell = st.number_input("Shell length T-T (mm)", min_value=100.0, max_value=50000.0,
                                   value=6000.0, step=100.0, key="L_shell",
                                   help="Tangent-to-tangent cylinder length (excludes head depths).")
+        P_op_barg = st.number_input("Operating pressure (barg)", min_value=0.0, max_value=500.0,
+                                    value=18.0, step=0.5, key="P_op_barg")
+        T_op_C = st.number_input("Operating temperature (°C)", min_value=-200.0, max_value=500.0,
+                                  value=90.0, step=5.0, key="T_op_C")
         P_barg = st.number_input("Design pressure (barg)", min_value=0.1, max_value=500.0,
                                  value=20.0, step=0.5, key="P_barg")
         T_C = st.number_input("Design temperature (°C)", min_value=-200.0, max_value=500.0,
@@ -2086,6 +2090,7 @@ def main():
             issued_for=issued_for,
             Di=Di, L_shell=L_shell, h_head=_h_head,
             P_barg=P_barg, T_C=T_C,
+            P_op_barg=P_op_barg, T_op_C=T_op_C,
             mat_key=mat_key, head_type_label=head_label_map[head_type],
             code_key=code_key, fd_MPa=fd,
             shell_res=shell_res, head_res=head_res,
