@@ -7,3 +7,8 @@ from .nozzle_geometry import (
 from .nozzle_reinforcement import reinforcement_check, ReinforcementResult
 from .vessel_design import shell_thickness
 from .vessel_volume import vessel_volumes
+from .separator_process import separator_check, SeparatorProcessResult
+from .fluid_properties import (
+    gas_properties, liquid_properties, FluidProps,
+    ideal_gas_density, GAS_FLUIDS, LIQ_FLUIDS,
+)
