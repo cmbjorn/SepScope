@@ -56,40 +56,40 @@ def _loc_y(loc: str, R: float) -> float:
 def _default_nozzles(Di: float, L_shell: float) -> list[dict]:
     """
     Typical horizontal two-phase separator nozzle list.
-    Inlets DN250, gas outlet DN100, liquid outlet DN200,
-    PSV DN100, manway DN600 (≈24", closest standard to 26"), rest DN50.
+    Inlets high on endcaps (20% from top). Process outlets at shell centre.
+    Instruments spaced to avoid OD overlaps.
     """
     pn = 25
     L  = L_shell
     D  = Di
-    c  = L / 2          # vessel centre
+    c  = L / 2
     return [
-        # ── Process nozzles ───────────────────────────────────────────────────
-        {"tag": "N1",  "service": "Inlet",                "loc": "Left head",      "dn": 250, "pn": pn, "d_from_top": D / 2,    "axial_mm": c},
-        {"tag": "N2",  "service": "Inlet",                "loc": "Right head",     "dn": 250, "pn": pn, "d_from_top": D / 2,    "axial_mm": c},
+        # ── Process inlets — high on endcaps (20 % from top) ─────────────────
+        {"tag": "N1",  "service": "Inlet",                "loc": "Left head",      "dn": 250, "pn": pn, "d_from_top": D * 0.20, "axial_mm": c},
+        {"tag": "N2",  "service": "Inlet",                "loc": "Right head",     "dn": 250, "pn": pn, "d_from_top": D * 0.20, "axial_mm": c},
+        # ── Process outlets — centre of shell ─────────────────────────────────
         {"tag": "GO",  "service": "Gas outlet",           "loc": "Shell — top",    "dn": 100, "pn": pn, "d_from_top": D / 2,    "axial_mm": c},
         {"tag": "LO",  "service": "Liquid outlet",        "loc": "Shell — bottom", "dn": 200, "pn": pn, "d_from_top": D / 2,    "axial_mm": c},
         # ── Access / safety ───────────────────────────────────────────────────
-        {"tag": "MH",  "service": "Manway",               "loc": "Shell — top",    "dn": 600, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.25},
-        {"tag": "PSV", "service": "PSV",                  "loc": "Shell — top",    "dn": 100, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.40},
-        # ── Drain (low, on endcap) ────────────────────────────────────────────
-        {"tag": "D1",  "service": "Drain",                "loc": "Left head",      "dn":  50, "pn": pn, "d_from_top": D * 0.95, "axial_mm": c},
-        # ── Vent & purge ──────────────────────────────────────────────────────
-        {"tag": "V1",  "service": "Vent",                 "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.75},
-        {"tag": "PG",  "service": "Purge",                "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.10},
-        # ── Pressure instruments ──────────────────────────────────────────────
-        {"tag": "PT1", "service": "Pressure transmitter", "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.15},
-        {"tag": "PI1", "service": "Pressure indicator",   "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.80},
-        {"tag": "PSH", "service": "Pressure trip",        "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.20},
-        # ── Level instruments (close to centre) ───────────────────────────────
-        {"tag": "LT1", "service": "Level transmitter",    "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": c - 150},
-        {"tag": "LSH", "service": "Level trip",           "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": c + 150},
-        {"tag": "LGA", "service": "Level gauge",          "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": c - 100},
-        {"tag": "LGB", "service": "Level gauge",          "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": c + 100},
-        # ── Temperature ───────────────────────────────────────────────────────
-        {"tag": "TT1", "service": "Temperature transmitter", "loc": "Shell — bottom", "dn": 50, "pn": pn, "d_from_top": D / 2,  "axial_mm": c},
+        {"tag": "MH",  "service": "Manway",               "loc": "Shell — top",    "dn": 600, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.20},
+        {"tag": "PSV", "service": "PSV",                  "loc": "Shell — top",    "dn": 100, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.82},
+        # ── Drain & vent ──────────────────────────────────────────────────────
+        {"tag": "D1",  "service": "Drain",                "loc": "Shell — bottom", "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.08},
+        {"tag": "V1",  "service": "Vent",                 "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.04},
+        {"tag": "PG",  "service": "Purge",                "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.93},
+        # ── Pressure instruments — sides, spread left & right ─────────────────
+        {"tag": "PT1", "service": "Pressure transmitter", "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.13},
+        {"tag": "PSH", "service": "Pressure trip",        "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.30},
+        {"tag": "PI1", "service": "Pressure indicator",   "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.80},
+        # ── Level instruments — centred on vessel, both sides ─────────────────
+        {"tag": "LT1", "service": "Level transmitter",    "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.42},
+        {"tag": "LGA", "service": "Level gauge",          "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.47},
+        {"tag": "LGB", "service": "Level gauge",          "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.53},
+        {"tag": "LSH", "service": "Level trip",           "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.58},
+        # ── Temperature — bottom, in liquid ───────────────────────────────────
+        {"tag": "TT1", "service": "Temperature transmitter", "loc": "Shell — bottom", "dn": 50, "pn": pn, "d_from_top": D / 2,  "axial_mm": L * 0.38},
         # ── Spare ─────────────────────────────────────────────────────────────
-        {"tag": "SP1", "service": "Spare",                "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.90},
+        {"tag": "SP1", "service": "Spare",                "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.97},
     ]
 
 st.set_page_config(
@@ -500,47 +500,33 @@ def _vessel_figure(
             )
 
         elif loc in ("Shell — top", "Shell — bottom"):
-            # ── Shell top/bottom: stub projecting from vessel wall ────────────
+            # ── Shell top/bottom: stub line + circle ──────────────────────────
             nx     = nz_cfg["axial_mm"]
             sign   = 1.0 if loc == "Shell — top" else -1.0
             y_wall = sign * R
-            stub_h = max(90.0, nOR * 1.8)        # stub projection length
-            fl_ext = max(12.0, nOR * 0.4)         # flange overhang each side
-            bore_r = nOR * 0.65                   # approx bore radius
-            y_tip  = y_wall + sign * stub_h       # flange face y
+            disp_r = min(nOR, R * 0.28)           # cap display radius
+            stub_h = disp_r * 1.6 + 12            # stub length
+            y_ctr  = y_wall + sign * stub_h       # circle centre
 
-            # Nozzle barrel
-            fig.add_shape(type="rect",
-                          x0=nx - nOR, x1=nx + nOR,
-                          y0=y_wall, y1=y_tip,
-                          fillcolor=nfill, line=dict(color=nc, width=1.5))
-            # Bore (open centre, white fill)
-            fig.add_shape(type="rect",
-                          x0=nx - bore_r, x1=nx + bore_r,
-                          y0=y_wall, y1=y_tip,
-                          fillcolor="rgba(255,255,255,0.9)",
-                          line=dict(color=nc, width=0.8, dash="dot"))
-            # Flange plate
-            fig.add_shape(type="rect",
-                          x0=nx - nOR - fl_ext, x1=nx + nOR + fl_ext,
-                          y0=y_tip - sign * 7, y1=y_tip + sign * 7,
-                          fillcolor=nfill, line=dict(color=nc, width=1.5))
-            # Tag label
+            fig.add_shape(type="line", x0=nx, x1=nx,
+                          y0=y_wall, y1=y_ctr,
+                          line=dict(color=nc, width=max(1.5, nOR * 0.025)))
+            fig.add_trace(go.Scatter(
+                x=[nx + disp_r * math.cos(t) for t in theta_pts],
+                y=[y_ctr + disp_r * math.sin(t) for t in theta_pts],
+                fill="toself", fillcolor=nfill,
+                line=dict(color=nc, width=1.5),
+                showlegend=False,
+                hovertemplate=hover + "<extra></extra>",
+            ))
             fig.add_annotation(
-                x=nx, y=y_tip + sign * 14,
+                x=nx, y=y_ctr + sign * (disp_r + 12),
                 text=f"<b>{nz_cfg['tag']}</b>",
                 showarrow=False, xanchor="center",
                 yanchor="bottom" if sign > 0 else "top",
                 font=dict(size=9, color=nc),
                 bgcolor="rgba(255,255,255,0.75)", borderpad=1,
             )
-            # Invisible scatter for hover
-            fig.add_trace(go.Scatter(
-                x=[nx], y=[y_wall + sign * stub_h / 2],
-                mode="markers", marker=dict(size=1, opacity=0),
-                showlegend=False,
-                hovertemplate=hover + "<extra></extra>",
-            ))
 
         else:
             # ── Shell side: circles on both vessel walls (end-on projection) ─
@@ -575,35 +561,32 @@ def _vessel_figure(
                 bgcolor="rgba(255,255,255,0.75)", borderpad=1,
             )
 
-    # ── Baffle plates ────────────────────────────────────────────────────────
-    _bclr = "#7c3aed" if has_baffles else "#c4b5fd"
+    # ── Baffle plates (distribution plate with distributed holes) ────────────
+    _bclr  = "#7c3aed" if has_baffles else "#c4b5fd"
     _blabel = f"Baffle ({baffle_open_pct:.0f}% open)" if has_baffles else "Baffle (disabled)"
     if L_baffle_mm > 0:
         for bx in (L_baffle_mm, L_shell - L_baffle_mm):
             if 0 < bx < L_shell:
+                # Full-height plate line
                 fig.add_shape(type="line", x0=bx, x1=bx, y0=-R, y1=R,
-                              line=dict(color=_bclr, width=1.8 if has_baffles else 1.0,
-                                        dash="dashdot" if has_baffles else "dot"))
-                # Hatch the closed portion (80%) by drawing a filled rect on the solid part
+                              line=dict(color=_bclr,
+                                        width=2.5 if has_baffles else 1.0,
+                                        dash="solid" if has_baffles else "dot"))
                 if has_baffles:
-                    closed_h = R * (1.0 - baffle_open_pct / 100.0)
-                    fig.add_shape(type="rect",
-                                  x0=bx - 4, x1=bx + 4,
-                                  y0=-R, y1=-R + closed_h,
-                                  fillcolor="rgba(124,58,237,0.20)",
-                                  line=dict(color="rgba(0,0,0,0)", width=0))
-                    fig.add_shape(type="rect",
-                                  x0=bx - 4, x1=bx + 4,
-                                  y0=R - closed_h, y1=R,
-                                  fillcolor="rgba(124,58,237,0.20)",
-                                  line=dict(color="rgba(0,0,0,0)", width=0))
+                    # Distributed holes: small horizontal gaps evenly spaced
+                    n_holes = max(5, int(R * 2 / 60))
+                    for k in range(n_holes):
+                        hy = -R + (2 * R) * (k + 0.5) / n_holes
+                        fig.add_shape(type="line",
+                                      x0=bx - 7, x1=bx + 7, y0=hy, y1=hy,
+                                      line=dict(color=_bclr, width=1.2))
         for bx in (L_baffle_mm, L_shell - L_baffle_mm):
             if 0 < bx < L_shell:
                 fig.add_annotation(x=bx, y=R + 20, text=_blabel,
                                    showarrow=False, xanchor="center", yanchor="bottom",
                                    font=dict(size=9, color=_bclr))
 
-    # ── Inlet devices (half-pipe) ─────────────────────────────────────────────
+    # ── Inlet devices (half-pipe distributor, inside cylindrical shell) ──────
     if has_inlet_dev:
         for nz_cfg, nres, _ in nozzle_results:
             if nz_cfg.get("service") != "Inlet":
@@ -611,23 +594,25 @@ def _vessel_figure(
             loc = nz_cfg["loc"]
             nz_OR = NOZZLE_OD.get(nz_cfg["dn"], nz_cfg["dn"] * 1.05) / 2
             if loc == "Left head" and nres is not None:
-                nx, ny = -nres.z_on_head_mm, nres.y_nozzle_mm
+                # Place device just inside the tangent line (in the cylindrical shell)
+                nx = max(nz_OR * 1.2, 50.0)
+                ny = nres.y_nozzle_mm
             elif loc == "Right head" and nres is not None:
-                nx, ny = L_shell + nres.z_on_head_mm, nres.y_nozzle_mm
+                nx = L_shell - max(nz_OR * 1.2, 50.0)
+                ny = nres.y_nozzle_mm
             else:
                 continue
-            # Half-pipe: open bottom (U-shape) — closed top and sides, open downward
-            # Draw as three sides of a rectangle below nozzle centre
+            # Half-pipe: U-shape open downward, deflects flow away from liquid surface
             hp = nz_OR * 0.9
             fig.add_shape(type="line", x0=nx - hp, x1=nx + hp,
                           y0=ny - hp * 2, y1=ny - hp * 2,
-                          line=dict(color="#0891b2", width=2))          # bottom
+                          line=dict(color="#0891b2", width=2))
             fig.add_shape(type="line", x0=nx - hp, x1=nx - hp,
                           y0=ny, y1=ny - hp * 2,
-                          line=dict(color="#0891b2", width=2))          # left side
+                          line=dict(color="#0891b2", width=2))
             fig.add_shape(type="line", x0=nx + hp, x1=nx + hp,
                           y0=ny, y1=ny - hp * 2,
-                          line=dict(color="#0891b2", width=2))          # right side
+                          line=dict(color="#0891b2", width=2))
             fig.add_annotation(x=nx, y=ny - hp * 2 - 14, text="½-pipe",
                                showarrow=False, xanchor="center", yanchor="top",
                                font=dict(size=8, color="#0891b2"))
@@ -804,11 +789,11 @@ def _vessel_figure(
         paper_bgcolor="white",
         showlegend=True,
         legend=dict(
-            orientation="v", x=0.01, y=0.99,
-            xanchor="left", yanchor="top",
-            bgcolor="rgba(255,255,255,0.85)",
+            orientation="h", x=0.5, y=-0.12,
+            xanchor="center", yanchor="top",
+            bgcolor="rgba(255,255,255,0.9)",
             bordercolor="#e2e8f0", borderwidth=1,
-            font=dict(size=10),
+            font=dict(size=9),
         ),
         xaxis=dict(
             title="Axial position (mm) — 0 = left tangent, L = right tangent",
@@ -1142,6 +1127,8 @@ def main():
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
+        vessel_tag = st.text_input("Equipment tag", value="V-1001", key="vessel_tag")
+
         st.header("Vessel parameters")
 
         code = st.radio("Design code", ["EN 13445-3", "ASME VIII Div.1"],
@@ -1443,6 +1430,26 @@ def main():
             value=3.0, step=0.5, key="t_surge_req",
         )
 
+    # ── Sync nozzle widget values into session_state["nozzles"] ────────────────
+    # The nozzle editor renders BELOW the chart, so we must pull the latest
+    # widget values into the nozzle dicts BEFORE running any computation.
+    for _i, _nz in enumerate(st.session_state.get("nozzles", [])):
+        for _field, _skey in [
+            ("tag",     f"nz_{_i}_tag"),
+            ("service", f"nz_{_i}_svc"),
+            ("loc",     f"nz_{_i}_loc"),
+            ("dn",      f"nz_{_i}_dn"),
+            ("pn",      f"nz_{_i}_pn"),
+        ]:
+            if _skey in st.session_state:
+                _nz[_field] = st.session_state[_skey]
+        if f"nz_{_i}_pos" in st.session_state:
+            _pos = st.session_state[f"nz_{_i}_pos"]
+            if _nz.get("loc") in ("Left head", "Right head"):
+                _nz["d_from_top"] = _pos
+            else:
+                _nz["axial_mm"] = _pos
+
     # ── Compute ───────────────────────────────────────────────────────────────
     stress   = allowable_stress(mat_key, T_C, code_key)
     fd       = stress["fd_MPa"]
@@ -1525,6 +1532,9 @@ def main():
         has_vortex_brk=has_vortex_brk,
     )
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    _ud1, *_ = st.columns([1, 6])
+    if _ud1.button("🔄 Update drawing", help="Click after editing the nozzle table below to refresh the sketch"):
+        st.rerun()
 
     # ── Inline nozzle editor — directly below the drawing ────────────────────
     nozzles: list[dict] = st.session_state["nozzles"]
@@ -1960,6 +1970,48 @@ def main():
         st.caption(
             f"Shell L = {L_shell:.0f} mm T-T  ·  "
             + ("Endcap volumes included" if include_heads else "Cylinder only — endcaps excluded")
+        )
+
+    # ── Report generation ─────────────────────────────────────────────────────
+    st.divider()
+    rb1, rb2, *_ = st.columns([1.1, 1.5, 4])
+    rb1.markdown("**Reports**")
+    if rb2.button("📋 Generate Vessel Datasheet", type="primary"):
+        import report as _report
+        # Compute head depth from profile points (same logic as _vessel_figure)
+        _zs_up, _ = _head_surface_points(
+            head_type, Di, R_c, r_k, alpha_deg_cone, b)
+        _h_head = max((abs(z) for z in _zs_up), default=0.0)
+        html_bytes = _report.generate_datasheet_html(
+            vessel_tag=vessel_tag,
+            Di=Di, L_shell=L_shell, h_head=_h_head,
+            P_barg=P_barg, T_C=T_C,
+            mat_key=mat_key, head_type_label=head_label_map[head_type],
+            code_key=code_key, fd_MPa=fd,
+            shell_res=shell_res, head_res=head_res,
+            nozzle_results=nozzle_results,
+            levels_mm=levels_mm_vol,
+            sep_res=sep_res,
+            gas_props=gas_props, liq_props=liq_props,
+            Q_gas_m3h=Q_gas_m3h, Q_liq_m3h=Q_liq_m3h,
+            gas_fluid=gas_fluid, liq_fluid=liq_fluid,
+            placement_checks=placement_checks,
+            head_warnings=head_res.warnings,
+            shell_warnings=shell_res.warnings,
+            saddle_a_mm=saddle_a_mm, saddle_w_mm=saddle_w_mm,
+            has_meshpad=has_meshpad, has_baffles=has_baffles,
+            has_inlet_dev=has_inlet_dev, has_vortex_brk=has_vortex_brk,
+            L_baffle_mm=L_baffle_mm, baffle_open_pct=baffle_open_pct,
+            K_sb=K_sb, include_heads=include_heads,
+        ).encode("utf-8")
+        from datetime import date as _date
+        fname = f"datasheet_{vessel_tag.replace(' ','_')}_{_date.today().isoformat()}.html"
+        st.download_button(
+            "📥 Download Datasheet (HTML → print to PDF)",
+            data=html_bytes,
+            file_name=fname,
+            mime="text/html",
+            key="dl_report",
         )
 
 
