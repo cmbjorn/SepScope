@@ -1153,6 +1153,15 @@ def main():
 
         _gen_btn = st.button("📋 Generate Datasheet", type="primary", key="gen_report_btn",
                              use_container_width=True)
+        if "report_html" in st.session_state:
+            st.download_button(
+                "📥 Download (HTML / print to PDF)",
+                data=st.session_state["report_html"],
+                file_name=st.session_state.get("report_fname", "datasheet.html"),
+                mime="text/html",
+                key="dl_report",
+                use_container_width=True,
+            )
         st.divider()
 
         st.header("Vessel parameters")
@@ -1454,10 +1463,15 @@ def main():
         t_holdup_req = st.number_input(
             "Required hold-up time (min)", min_value=0.5, max_value=60.0,
             value=3.0, step=0.5, key="t_holdup_req",
+            help="Liquid volume at NLL ÷ liquid flow rate. Ensures enough liquid inventory "
+                 "for stable level control. Typical: 1–3 min for well-instrumented separators.",
         )
         t_surge_req = st.number_input(
             "Required surge time (min)", min_value=0.5, max_value=60.0,
             value=3.0, step=0.5, key="t_surge_req",
+            help="Time to fill from NLL to LAHH at full liquid flow rate. "
+                 "Represents the operator/control-system response window between the "
+                 "normal level and the high-high shutdown trip. Typical: 2–5 min.",
         )
 
     # ── Sync nozzle widget values into session_state["nozzles"] ────────────────
@@ -2088,9 +2102,10 @@ def main():
     # ── Report generation (triggered from sidebar button) ─────────────────────
     if _gen_btn:
         import report as _report
+        from datetime import date as _date
         _zs_up, _ = _head_surface_points(head_type, Di, R_c, r_k, alpha_deg_cone, b)
         _h_head   = max((abs(z) for z in _zs_up), default=0.0)
-        html_bytes = _report.generate_datasheet_html(
+        st.session_state["report_html"] = _report.generate_datasheet_html(
             project_name=project_name,
             vessel_tag=vessel_tag,
             issued_for=issued_for,
@@ -2115,15 +2130,10 @@ def main():
             K_sb=K_sb, n_inlets=n_inlets,
             P_op_barg=P_op_barg, T_op_C=T_op_C,
         ).encode("utf-8")
-        from datetime import date as _date
-        fname = f"datasheet_{vessel_tag.replace(' ','_')}_{_date.today().isoformat()}.html"
-        st.sidebar.download_button(
-            "📥 Download (HTML/print to PDF)",
-            data=html_bytes,
-            file_name=fname,
-            mime="text/html",
-            key="dl_report",
+        st.session_state["report_fname"] = (
+            f"datasheet_{vessel_tag.replace(' ','_')}_{_date.today().isoformat()}.html"
         )
+        st.rerun()
 
 
 if __name__ == "__main__":
