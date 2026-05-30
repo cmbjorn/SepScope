@@ -565,10 +565,12 @@ def _vessel_figure(
                 font=dict(size=9, color=nc),
                 bgcolor="rgba(255,255,255,0.75)", borderpad=1,
             )
-            # Track for y_lim
-            extent = y_tip + sign * 22  # label clearance
-            _y_nz_top = max(_y_nz_top, extent if sign > 0 else -extent + Di)
-            _y_nz_bot = min(_y_nz_bot, -abs(extent) if sign < 0 else _y_nz_bot)
+            # Track actual nozzle + label extents for y-axis limits.
+            # Top nozzles extend upward (sign=+1); bottom nozzles downward (sign=−1).
+            if sign > 0:
+                _y_nz_top = max(_y_nz_top, y_tip + 22)   # +22 for tag label
+            else:
+                _y_nz_bot = min(_y_nz_bot, y_tip - 22)   # −22 for tag label
 
         else:
             # ── Shell side: concentric circles at y=0 (end-on in elevation) ──
@@ -753,14 +755,12 @@ def _vessel_figure(
     saddle_depth = (saddle_h + saddle_base_h + 40) if saddle_a_mm > 0 else 0
     x_min = -(h_head + 80)
     x_max = L_shell + h_head + 80
-    # Y-axis: show just enough to include vessel wall + nozzle stubs + labels.
-    # scaleanchor is intentionally NOT used — the figure is a schematic, not a
-    # true-scale drawing, and forcing 1:1 scale makes the vessel diameter tiny
-    # for long vessels.
-    _top_clearance = max(t_shell_nom, 15) + 40     # wall thickness + label room
+    # Y-axis: tight range — only what's needed to show vessel + nozzle stubs + labels.
+    # _y_nz_top / _y_nz_bot hold the extreme y-coordinates of all shell nozzle stubs.
+    _top_clearance = max(t_shell_nom, 15) + 40
     _bot_clearance = max(t_shell_nom, 15) + max(40, saddle_depth)
     y_lim     = max(R + _top_clearance, _y_nz_top + 25)
-    y_lim_bot = R + _bot_clearance
+    y_lim_bot = max(R + _bot_clearance, abs(_y_nz_bot) + 25)
 
     # Build simple two-frame animation to 'flash' problem nozzles (pulse traces)
     pulse_indices: list[int] = []
