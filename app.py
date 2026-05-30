@@ -2769,8 +2769,10 @@ def main():
 
     # ── LDV — Liquid Design Volume ────────────────────────────────────────────
     # LDV = minimum liquid inventory required to fill downstream equipment.
-    # Segment A: vessel bottom (+ offset) to LZLL, scaled by safety factor.
-    # Segment B: LALL to LAL (low-alarm response buffer).
+    # User specifies required LDV volume + safety factor → required volume.
+    # Checks (independent):
+    #   - Segment A: Volume(VB → LZLL) ≥ LDV × SF?
+    #   - Segment B: Volume(LZLL → LALL) ≥ LDV × SF?
     # Volumes use full vessel including endcaps (vessel_volumes with include_heads=True).
     _ldv_result: dict | None = None
     if include_ldv:
@@ -2795,20 +2797,19 @@ def main():
         )
         _vmap = {r["tag"]: r["vol_m3"] for r in _ldv_vol["levels"]}
 
-        _seg_a_raw = max(0.0, _vmap.get("LDV_LZLL", 0.0) - _vmap.get("LDV_VB",   0.0))
-        _seg_a     = _seg_a_raw * ldv_sf
-        _seg_b     = max(0.0, _vmap.get("LDV_LAL",  0.0) - _vmap.get("LDV_LALL", 0.0))
-        _ldv_total = _seg_a + _seg_b                        # Seg A (×SF) + Seg B
-        _ldv_raw   = _seg_a_raw + _seg_b                    # same, before SF
-        _ldv_nll_inv = max(0.0, _vmap.get("LDV_NLL", 0.0) - _vmap.get("LDV_VB",  0.0))
-        _ldv_ok    = _ldv_nll_inv >= _ldv_total
+        # Calculate segment volumes
+        _seg_a = max(0.0, _vmap.get("LDV_LZLL", 0.0) - _vmap.get("LDV_VB", 0.0))
+        _seg_b = max(0.0, _vmap.get("LDV_LAL", 0.0) - _vmap.get("LDV_LALL", 0.0))
 
-        # Target comparison (when a specific LDV volume is provided)
-        _tgt_ok: bool | None = None
-        _tgt_sf_ok: bool | None = None
+        # If no specific LDV target is set, use the segments themselves scaled by SF
+        _ldv_required = None
         if ldv_target_m3 is not None and ldv_target_m3 > 0:
-            _tgt_ok    = _ldv_raw    >= ldv_target_m3           # levels provide enough raw volume
-            _tgt_sf_ok = _ldv_nll_inv >= ldv_target_m3 * ldv_sf  # NLL inventory covers target × SF
+            _ldv_required = ldv_target_m3 * ldv_sf
+        
+        # Two independent checks
+        _seg_a_ok = _seg_a >= (_ldv_required if _ldv_required is not None else 0.0)
+        _seg_b_ok = _seg_b >= (_ldv_required if _ldv_required is not None else 0.0)
+        _ldv_ok = _seg_a_ok and _seg_b_ok if _ldv_required is not None else True
 
         _ldv_result = {
             "eff_vb_mm":    _eff_vb,
@@ -2816,17 +2817,14 @@ def main():
             "lall_mm":      _lall_h,
             "lal_mm":       _lal_h,
             "nll_mm":       _nll_h,
-            "seg_a_raw_m3": _seg_a_raw,
             "seg_a_m3":     _seg_a,
             "seg_b_m3":     _seg_b,
-            "ldv_raw_m3":   _ldv_raw,
-            "ldv_total_m3": _ldv_total,
-            "nll_inv_m3":   _ldv_nll_inv,
+            "ldv_required_m3": _ldv_required,  # None if not set; otherwise LDV × SF
             "sf":           ldv_sf,
-            "ok":           _ldv_ok,
-            "target_m3":    ldv_target_m3,   # None if not set
-            "target_ok":    _tgt_ok,         # levels raw volume ≥ target
-            "target_sf_ok": _tgt_sf_ok,      # NLL inventory ≥ target × SF
+            "seg_a_ok":     _seg_a_ok,         # Segment A ≥ LDV×SF?
+            "seg_b_ok":     _seg_b_ok,         # Segment B ≥ LDV×SF?
+            "ok":           _ldv_ok,           # Both segments OK?
+            "target_m3":    ldv_target_m3,     # User's specified LDV (before SF)
         }
 
     # Count inlet nozzles for n_inlets parameter

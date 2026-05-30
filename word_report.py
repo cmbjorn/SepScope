@@ -697,38 +697,35 @@ def generate_word_report(
         _caption(doc,
                  "Minimum liquid inventory required to fill downstream equipment that are partially "
                  "empty during operation or startup. Volumes include full vessel geometry "
-                 "(cylinder + both endcaps).")
+                 "(cylinder + both endcaps). User specifies required LDV + safety factor; "
+                 "two independent checks: Segment A (VB → LZLL) ≥ LDV×SF  and  Segment B (LZLL → LALL) ≥ LDV×SF.")
         ldv_pairs = [
             ("Effective vessel bottom (VB)",
              f"{ldv['eff_vb_mm']:.0f} mm above vessel bottom"),
-            ("Segment A — VB → LZLL (raw)",
-             f"{ldv['seg_a_raw_m3']*1000:.1f} L  ({ldv['seg_a_raw_m3']:.4f} m³)"),
-            (f"Segment A × SF {ldv['sf']:.2f}",
-             f"{ldv['seg_a_m3']*1000:.1f} L  ({ldv['seg_a_m3']:.4f} m³)  "
-             f"[adds {(ldv['seg_a_m3']-ldv['seg_a_raw_m3'])*1000:.1f} L margin]"),
-            ("Segment B — LALL → LAL",
-             f"{ldv['seg_b_m3']*1000:.1f} L  ({ldv['seg_b_m3']:.4f} m³)  "
-             f"[LALL = {ldv['lall_mm']:.0f} mm  →  LAL = {ldv['lal_mm']:.0f} mm]"),
-            ("LDV Total  (Seg A×SF + Seg B)",
-             f"{ldv['ldv_total_m3']*1000:.1f} L  ({ldv['ldv_total_m3']:.4f} m³)"),
-            ("Available NLL inventory (VB → NLL, full vessel)",
-             f"{ldv['nll_inv_m3']*1000:.1f} L"),
-            ("NLL inventory ≥ LDV total",
-             "✓ PASS" if ldv["ok"] else "✗ FAIL"),
+            ("Safety factor", f"{ldv['sf']:.2f}"),
         ]
         if ldv.get("target_m3") is not None:
-            tgt_L = ldv["target_m3"] * 1000
-            raw_L = ldv.get("ldv_raw_m3", ldv["seg_a_raw_m3"] + ldv["seg_b_m3"]) * 1000
-            ldv_pairs += [
-                ("━━ Target LDV (before SF) — user input",
-                 f"{tgt_L:.1f} L  (downstream equipment volume)"),
-                ("Level volumes (Seg A raw + Seg B) vs target",
-                 f"{raw_L:.1f} L  " + ("✓ ≥ target" if ldv.get("target_ok") else f"✗ < target {tgt_L:.1f} L")),
-                (f"NLL inventory vs target × SF {ldv['sf']:.2f}",
-                 f"{ldv['nll_inv_m3']*1000:.1f} L  " +
-                 ("✓ ≥ " if ldv.get("target_sf_ok") else "✗ < ") +
-                 f"{tgt_L * ldv['sf']:.1f} L"),
-            ]
+            ldv_pairs.append(("Required LDV (before SF)",
+                              f"{ldv['target_m3']*1000:.1f} L  ({ldv['target_m3']:.4f} m³)"))
+            ldv_pairs.append(("Required LDV with SF",
+                              f"{ldv['ldv_required_m3']*1000:.1f} L  ({ldv['ldv_required_m3']:.4f} m³)"))
+            ldv_pairs.append(("", ""))  # spacer
+            ldv_pairs.append(("Segment A (VB → LZLL)",
+                              f"{ldv['seg_a_m3']*1000:.1f} L  ({ldv['seg_a_m3']:.4f} m³)"))
+            ldv_pairs.append(("Segment A ≥ Required LDV×SF?",
+                              "✓ PASS" if ldv.get("seg_a_ok") else "✗ FAIL"))
+            ldv_pairs.append(("Segment B (LZLL → LALL)",
+                              f"{ldv['seg_b_m3']*1000:.1f} L  ({ldv['seg_b_m3']:.4f} m³)"))
+            ldv_pairs.append(("Segment B ≥ Required LDV×SF?",
+                              "✓ PASS" if ldv.get("seg_b_ok") else "✗ FAIL"))
+            ldv_pairs.append(("Both segments adequate?",
+                              "✓ PASS" if ldv.get("ok") else "✗ FAIL"))
+        else:
+            ldv_pairs.append(("Segment A (VB → LZLL)",
+                              f"{ldv['seg_a_m3']*1000:.1f} L  ({ldv['seg_a_m3']:.4f} m³)"))
+            ldv_pairs.append(("Segment B (LZLL → LALL)",
+                              f"{ldv['seg_b_m3']*1000:.1f} L  ({ldv['seg_b_m3']:.4f} m³)"))
+            ldv_pairs.append(("Note", "Specify an LDV target to see pass/fail checks."))
         _kv_table(doc, ldv_pairs)
 
     # ── E — Liquid Levels ─────────────────────────────────────────────────────
@@ -808,11 +805,16 @@ def generate_word_report(
         notes    = []
         if nres:
             notes.append(f"Zone: {nres.zone.replace('_', ' ')}")
-            if nz.get("service") == "Inlet":
-                nz_IR  = (OD - 2*t) / 2.0
-                nz_bot = (Di - nres.d_from_top_mm) - nz_IR
-                dist   = lzhh_mm - nz_bot
-                notes.append(f"inlet {'submerged' if dist > 0 else 'clear'} at LZHH ({dist:+.0f} mm)")
+            if nz.get("loc") in ("Left head", "Right head"):
+                nz_IR_w  = (OD - 2*t) / 2.0
+                nz_bot_w = (Di - nres.d_from_top_mm) - nz_IR_w
+                top_clr_w  = nres.edge_to_shell_mm          # OD top → crown ID
+                lzhh_clr_w = nz_bot_w - lzhh_mm             # LZHH → inlet device bottom
+                notes.append(f"OD top→crown: {top_clr_w:.0f} mm")
+                if nz.get("service") == "Inlet":
+                    _fw = ("✓" if lzhh_clr_w >= 150
+                           else ("✗ sub." if lzhh_clr_w < 0 else "⚠ <150mm"))
+                    notes.append(f"LZHH→inlet bot: {lzhh_clr_w:.0f} mm {_fw}")
         nz_rows.append([
             nz["tag"], "1", nz["service"], nz["loc"],
             f"DN{dn}", f"{pn_label} {nz.get('pn','')}",
@@ -827,38 +829,74 @@ def generate_word_report(
                 status_cols=[10])
 
     # G.1 — Endcap nozzle detail
-    head_nz = [(nz, nres, rres) for nz, nres, rres, *_ in nozzle_results if nres is not None]
+    head_nz = [(nz, nres, rres) for nz, nres, rres, *_ in nozzle_results
+               if nres is not None and nz.get("loc") in ("Left head", "Right head")]
     if head_nz:
-        _sub_heading(doc, "G.1  Endcap Nozzle Placement Detail")
+        _sub_heading(doc, "G.1  Endcap Nozzle Placement & Inlet Positioning")
         R = Di / 2.0
         min_weld_clr = max(3.0 * head_res.t_nom_mm, 25.0)
 
         detail_rows = []
         for nz, nres, rres in head_nz:
-            r = nres.r_from_axis_mm
-            e2k = f"{nres.edge_to_knuckle_mm:.0f} mm" if nres.edge_to_knuckle_mm is not None else "—"
-            geom_s = _status(nres.geom_ok)
-            code_s = _status(nres.code_ok)
-            reinf_s = _status(rres.adequate if rres else None)
-            weld_ok = nres.edge_to_shell_mm >= min_weld_clr
+            r        = nres.r_from_axis_mm
+            e2k      = f"{nres.edge_to_knuckle_mm:.0f} mm" if nres.edge_to_knuckle_mm is not None else "—"
+            geom_s   = _status(nres.geom_ok)
+            code_s   = _status(nres.code_ok)
+            reinf_s  = _status(rres.adequate if rres else None)
+            weld_ok  = nres.edge_to_shell_mm >= min_weld_clr
+            top_clr  = nres.edge_to_shell_mm
+            nz_IR_d  = (nres.nozzle_OD_mm - 2 * nres.nozzle_t_mm) / 2.0
+            nz_bot_d = (Di - nres.d_from_top_mm) - nz_IR_d
+            lzhh_clr = nz_bot_d - lzhh_mm
+            _lf = ("✓" if lzhh_clr >= 150
+                   else ("✗ sub" if lzhh_clr < 0 else "⚠<150"))
+            inlet_s  = (f"{lzhh_clr:.0f} mm {_lf}"
+                        if nz.get("service") == "Inlet" else "—")
             detail_rows.append([
                 nz["tag"], nz["loc"],
-                f"DN{nz['dn']}  ({nres.nozzle_OD_mm:.1f} mm OD)",
+                f"DN{nz['dn']}  ({nres.nozzle_OD_mm:.1f})",
                 f"{nres.d_from_top_mm:.0f} mm",
-                f"{r:.0f} mm  ({r/R:.2f}×R)",
+                f"{r:.0f}  ({r/R:.2f}×R)",
                 nres.zone.replace("_", " ").capitalize(),
-                f"{nres.edge_to_shell_mm:.0f} mm  " + ("✓" if weld_ok else f"✗ < {min_weld_clr:.0f} mm"),
+                f"{top_clr:.0f} mm  " + ("✓" if weld_ok else "✗"),
                 e2k,
                 f"{nres.z_on_head_mm:.0f} / {nres.head_depth_mm:.0f} mm",
+                inlet_s,
                 geom_s, code_s, reinf_s,
             ])
         _data_table(doc,
-                    ["Tag", "Side", "DN (OD)", "From top", "r (r/R)",
-                     "Zone", "Edge → wall", "Edge → bnd", "Depth / Head",
+                    ["Tag", "Side", "DN (OD mm)", "From top", "r (r/R)",
+                     "Zone", "OD top→crown", "Edge→bnd",
+                     "Depth/Head", "LZHH→inlet bot",
                      "Geom", "Code", "Reinf"],
                     detail_rows,
-                    col_w=[1.1, 2.0, 2.3, 1.8, 2.3, 2.0, 2.5, 2.0, 2.2, 1.2, 1.2, 1.2],
-                    status_cols=[9, 10, 11])
+                    col_w=[1.1, 1.8, 2.1, 1.6, 2.0, 2.0, 2.2, 1.8, 2.0, 2.0, 1.1, 1.1, 1.1],
+                    status_cols=[10, 11, 12])
+
+        # Inlet positioning detail for inlet nozzles
+        inlet_head_nz = [(nz, nres) for nz, nres, _ in head_nz
+                         if nz.get("service") == "Inlet"]
+        if inlet_head_nz:
+            _sub_heading(doc, "G.1.1  Inlet Nozzle Positioning Detail")
+            for nz, nres in inlet_head_nz:
+                nz_IR_p  = (nres.nozzle_OD_mm - 2 * nres.nozzle_t_mm) / 2.0
+                nz_bot_p = (Di - nres.d_from_top_mm) - nz_IR_p
+                top_clr_p  = nres.edge_to_shell_mm
+                lzhh_clr_p = nz_bot_p - lzhh_mm
+                _kv_table(doc, [
+                    (f"{nz['tag']} — {nz['service']} ({nz['loc']}, DN{nz['dn']})", ""),
+                    ("Nozzle OD top → vessel crown ID",
+                     f"{top_clr_p:.0f} mm"
+                     + ("  ✓" if top_clr_p >= min_weld_clr
+                        else f"  ✗ below min {min_weld_clr:.0f} mm")),
+                    ("LZHH → inlet device bottom",
+                     f"{lzhh_clr_p:.0f} mm"
+                     + ("  ✓ ≥ 150 mm" if lzhh_clr_p >= 150
+                        else ("  ✗ SUBMERGED at LZHH" if lzhh_clr_p < 0
+                              else f"  ⚠ only {lzhh_clr_p:.0f} mm — min 150 mm"))),
+                    ("Inlet bore bottom from vessel bottom", f"{nz_bot_p:.0f} mm"),
+                    ("Nozzle centreline from vessel top", f"{nres.d_from_top_mm:.0f} mm"),
+                ], col_w=(7.0, 10.5))
 
         # Nozzle warnings per head nozzle
         for nz, nres, rres in head_nz:
