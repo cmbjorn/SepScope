@@ -787,10 +787,18 @@ def _vessel_figure(
                                                                 {"frame": {"duration": 700, "redraw": False},
                                                                  "fromcurrent": True, "transition": {"duration": 0}}])])])
 
-    # Chart height: fixed proportional to vessel diameter so the cross-section is
-    # clearly legible regardless of vessel length. Min 360 px, max 600 px.
-    _y_span  = y_lim + y_lim_bot
-    _chart_h = max(360, min(600, int(_y_span / Di * 480) + 60))
+    # Chart height for a 1:1-scale drawing.
+    # With scaleanchor="x" Plotly shrinks the plot area so the data-unit size
+    # is equal on both axes.  The required plot-area height is:
+    #   h_plot ≈ effective_plot_width × (y_span / x_span)
+    # Tuned for the typical Di=1.8 m / L=4 m vessel at ~1250 px effective
+    # plot-area width (full-width Streamlit widget minus Plotly internal margins).
+    # Longer vessels naturally produce shorter charts — the scale stays correct.
+    _x_span   = x_max - x_min
+    _y_span   = y_lim + y_lim_bot
+    _plot_w   = 1250                              # effective plot-area width (px)
+    _plot_h   = _plot_w * _y_span / _x_span      # required height at 1:1 scale
+    _chart_h  = max(380, min(720, int(_plot_h) + 130))  # add margin/legend space
 
     fig.update_layout(
         height=_chart_h,
@@ -814,6 +822,7 @@ def _vessel_figure(
         yaxis=dict(
             title="Vertical position (mm) — 0 = vessel axis",
             range=[-y_lim_bot, y_lim],
+            scaleanchor="x", scaleratio=1,
             gridcolor="#f8fafc",
         ),
     )
