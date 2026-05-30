@@ -1,5 +1,5 @@
 """
-Piping and flange standards for VesselCalc.
+Piping and flange standards for SepScope.
 
 Sources:
   EN 1092-1:2018  Flanges PN designation (pressures in barg at 20 °C)

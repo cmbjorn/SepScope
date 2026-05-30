@@ -1,7 +1,8 @@
 """
-VesselCalc — Pressure vessel design screener (horizontal vessel).
+SepScope — Separator scoping for inquiry and FEED.
 
-Evaluates nozzle placement on endcaps per EN 13445-3:2021 and ASME VIII Div.1.
+Screening-level evaluation of horizontal two-phase separators.
+Not a certified design tool — for inquiry and FEED scoping only.
 """
 import math
 import streamlit as st
@@ -93,8 +94,8 @@ def _default_nozzles(Di: float, L_shell: float) -> list[dict]:
     ]
 
 st.set_page_config(
-    page_title="VesselCalc",
-    page_icon="🔩",
+    page_title="SepScope",
+    page_icon="🛢️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -1613,7 +1614,8 @@ def _badge(label: str, ok: bool | None, detail: str = "") -> str:
 # ──────────────────────── MAIN APP ───────────────────────────────────────────
 
 def main():
-    st.title("VesselCalc — Pressure Vessel Screener")
+    st.title("SepScope")
+    st.caption("Separator scoping for inquiry and FEED — not a certified design tool")
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:

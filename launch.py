@@ -1,5 +1,5 @@
 """
-VesselCalc launcher — double-click or run: python launch.py
+SepScope launcher — double-click or run: python launch.py
 Creates a virtual environment and installs dependencies on first run.
 """
 import os, sys, subprocess, time, webbrowser
@@ -22,7 +22,7 @@ if not os.path.exists(PYTHON):
     subprocess.check_call([PIP, "install", "-r", "requirements.txt"])
     print("Setup complete.\n")
 
-print(f"Starting VesselCalc at {URL}")
+print(f"Starting SepScope at {URL}")
 print("Close this window or press Ctrl+C to stop.\n")
 
 proc = subprocess.Popen([
