@@ -518,6 +518,55 @@ def _vessel_figure(
                 bgcolor="rgba(255,255,255,0.75)", borderpad=1,
             )
 
+            # ── Inlet positioning dimension lines ─────────────────────────
+            if nz_cfg.get("service") == "Inlet" and levels_mm:
+                _nz_IR      = (nres.nozzle_OD_mm - 2.0 * nres.nozzle_t_mm) / 2.0
+                _ny_bore_bot = ny - _nz_IR          # bore bottom in axis coords
+                _ny_noz_top  = ny + hw              # nozzle OD top
+
+                _y_lzhh = levels_mm.get("LZHH", Di * 0.95) - R
+
+                # Half-width of dimension tick marks (scale with nozzle)
+                _tk = min(30.0, hw * 0.4)
+
+                # X positions: one bracket per dimension, both beyond flange face
+                _x_d1 = x_tip + sign * max(hw * 0.5, 25.0)    # LZHH → bore bottom
+                _x_d2 = _x_d1 + sign * max(hw * 0.55, 40.0)   # nozzle top → crown
+
+                def _draw_dim(xd, y_a, y_b, col, label_text):
+                    if abs(y_b - y_a) < 4:
+                        return
+                    ya, yb = min(y_a, y_b), max(y_a, y_b)
+                    # Main vertical line
+                    fig.add_shape(type="line", x0=xd, x1=xd, y0=ya, y1=yb,
+                                  line=dict(color=col, width=1.8))
+                    # End ticks
+                    for _yy in (ya, yb):
+                        fig.add_shape(type="line",
+                                      x0=xd - _tk, x1=xd + _tk, y0=_yy, y1=_yy,
+                                      line=dict(color=col, width=1.8))
+                    # Label
+                    fig.add_annotation(
+                        x=xd + sign * (_tk + 5), y=(ya + yb) / 2,
+                        text=f"<b>{label_text}</b>",
+                        showarrow=False,
+                        xanchor="left" if sign > 0 else "right",
+                        yanchor="middle",
+                        font=dict(size=8.5, color=col),
+                        bgcolor="rgba(255,255,255,0.85)", borderpad=2,
+                    )
+
+                # Dim 1 (red): LZHH level → inlet bore bottom
+                _clr1 = _ny_bore_bot - _y_lzhh
+                _draw_dim(_x_d1, _y_lzhh, _ny_bore_bot,
+                          "#dc2626" if abs(_clr1) < 150 else "#16a34a",
+                          f"{_clr1:.0f} mm")
+
+                # Dim 2 (purple): nozzle OD top → vessel crown
+                _clr2 = R - _ny_noz_top
+                _draw_dim(_x_d2, _ny_noz_top, R, "#7c3aed",
+                          f"{_clr2:.0f} mm")
+
         elif loc in ("Shell — top", "Shell — bottom"):
             # ── Shell top/bottom: rectangular stub (elevation view) ───────────
             nx     = nz_cfg["axial_mm"]
