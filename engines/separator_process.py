@@ -101,11 +101,12 @@ def cut_size_liq_um(
 class SeparatorProcessResult:
     # ── Gas side ──────────────────────────────────────────────────────────────
     A_gas_m2: float
-    U_act_ms: float
+    U_act_ms: float        # superficial gas velocity per inlet zone (Q_gas/n_inlets / A_gas)
     U_max_ms: float
     gas_velocity_ok: bool
     t_gas_s: float
     V_gas_eff_m3: float
+    Q_gas_per_inlet_m3h: float   # gas flow per inlet nozzle (= Q_gas / n_inlets)
 
     # ── Liquid side (effective zone, between baffles) ─────────────────────────
     V_liq_eff_m3: float
@@ -178,10 +179,17 @@ def separator_check(
     A_liq_m2   = _cyl_area_m2(Di_mm, nll_mm)
     A_gas_m2   = max(1e-9, A_total_m2 - A_liq_m2)
 
-    # Souders-Brown
+    # Souders-Brown — velocity check uses the LOCAL gas velocity in each inlet zone.
+    # With n symmetric inlets the vessel splits into n parallel zones; each zone
+    # carries Q_gas/n through the full cross-section A_gas.
+    # The gas outlet and mesh pad see the full Q_gas, but the body velocity that
+    # drives entrainment is Q_gas/n_inlets / A_gas.
+    n_in      = max(n_inlets, 1)
+    Q_gas_per_inlet_m3h = Q_gas_m3h / n_in
+    Q_gas_per_inlet_m3s = Q_gas_m3s / n_in
     delta_rho = max(0.0, rho_liq_kgm3 - rho_gas_kgm3)
     U_max_ms  = K_sb * math.sqrt(delta_rho / max(rho_gas_kgm3, 0.001))
-    U_act_ms  = Q_gas_m3s / A_gas_m2 if A_gas_m2 > 0 else float("inf")
+    U_act_ms  = Q_gas_per_inlet_m3s / A_gas_m2 if A_gas_m2 > 0 else float("inf")
     gas_ok    = U_act_ms <= U_max_ms
 
     # Effective zone volumes
@@ -219,6 +227,7 @@ def separator_check(
         gas_velocity_ok    = gas_ok,
         t_gas_s            = t_gas_s,
         V_gas_eff_m3       = V_gas_eff_m3,
+        Q_gas_per_inlet_m3h = Q_gas_per_inlet_m3h,
         V_liq_eff_m3       = V_liq_eff_m3,
         V_surge_eff_m3     = V_surge_eff_m3,
         t_holdup_s         = t_holdup_s,

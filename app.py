@@ -1897,21 +1897,39 @@ def main():
         if stream_rows:
             st.dataframe(pd.DataFrame(stream_rows), hide_index=True, use_container_width=True)
         if n_inlets > 1:
-            st.caption(f"{n_inlets} inlet nozzles — flow split equally ({q_per_inlet[0]:,.0f} m³/h gas + {q_per_inlet[1]:,.1f} m³/h liquid per inlet)")
+            st.caption(
+                f"{n_inlets} inlet nozzles — two-phase flow split equally: "
+                f"{q_per_inlet[0]:,.0f} m³/h gas + {q_per_inlet[1]:,.1f} m³/h liquid per inlet. "
+                f"Gas outlet and liquid outlet each handle the full combined flow."
+            )
 
     with st.expander("**Separator sizing check**", expanded=True):
         sc1, sc2, sc3 = st.columns(3)
 
-        # Gas side + mesh pad sizing + cut sizes
+        # ── Gas velocity (Souders-Brown, per inlet zone) ─────────────────────
+        # With n symmetric inlets the vessel splits into n parallel zones; the
+        # local gas velocity that drives liquid entrainment is Q_gas/n / A_gas.
+        # The gas outlet and mesh pad see the full Q_gas (both zones converge).
         gas_ratio = sep_res.U_act_ms / max(sep_res.U_max_ms, 1e-9)
-        sc1.metric("Gas velocity actual",  f"{sep_res.U_act_ms:.3f} m/s")
-        sc1.metric(f"Gas velocity max ({'mesh pad' if has_meshpad else 'open vessel'})",
+        _vel_label = (
+            f"Gas velocity — per inlet zone"
+            + (f" (Q/2 each, {n_inlets} inlets)" if n_inlets > 1 else "")
+        )
+        sc1.metric(_vel_label, f"{sep_res.U_act_ms:.3f} m/s")
+        sc1.metric(f"Max gas velocity ({'K_pad' if has_meshpad else 'K_sb'} = {K_sb:.2f} m/s)",
                    f"{sep_res.U_max_ms:.3f} m/s",
                    delta=f"{'OK' if sep_res.gas_velocity_ok else 'EXCEEDS MAX'} — {gas_ratio*100:.0f} %",
                    delta_color="normal" if sep_res.gas_velocity_ok else "inverse")
+        if n_inlets > 1:
+            sc1.caption(
+                f"Each inlet handles {sep_res.Q_gas_per_inlet_m3h:,.0f} m³/h gas "
+                f"+ {Q_liq_m3h/n_inlets:,.1f} m³/h liquid. "
+                f"Velocity check uses per-zone flow; cut sizes and residence times "
+                f"are invariant to inlet count."
+            )
 
         if has_meshpad:
-            # Mesh pad sizing: required area vs available gas cross-section
+            # Mesh pad at gas outlet — sees FULL Q_gas from both zones converging
             import math as _math
             delta_rho_mp = max(0.0, rho_liq - rho_gas)
             U_pad_max = K_pad * _math.sqrt(delta_rho_mp / max(rho_gas, 0.001))
@@ -1919,21 +1937,18 @@ def main():
             A_pad_avail = sep_res.A_gas_m2
             pad_load_pct = A_pad_req / max(A_pad_avail, 1e-9) * 100
             pad_ok = A_pad_req <= A_pad_avail
-            sc1.metric("Mesh pad — area required",  f"{A_pad_req:.3f} m²")
+            sc1.metric("Mesh pad — area required (full Q_gas)",  f"{A_pad_req:.3f} m²")
             sc1.metric("Mesh pad — area available", f"{A_pad_avail:.3f} m²",
                        delta=f"{'OK' if pad_ok else 'UNDERSIZED'} — load {pad_load_pct:.0f} %",
                        delta_color="normal" if pad_ok else "inverse")
-            sc1.caption(f"K_pad = {K_pad:.2f} m/s  ·  100 mm thick, spans between baffles")
+            sc1.caption(f"K_pad = {K_pad:.2f} m/s  ·  pad at gas outlet, handles combined flow from all zones")
 
         sc1.metric("Gas residence time", f"{sep_res.t_gas_s/60:.1f} min")
-        sc1.metric("Droplet carryover cut size", f"{sep_res.d_cut_gas_um:.0f} μm",
-                   help="Liquid droplets larger than this are separated from the gas phase (Stokes)")
-        sc1.metric("Bubble carryunder cut size", f"{sep_res.d_cut_liq_um:.0f} μm",
-                   help="Gas bubbles larger than this rise out of the liquid before the outlet (Stokes)")
+        sc1.metric("Droplet cut size (gas phase, Stokes)", f"{sep_res.d_cut_gas_um:.0f} μm",
+                   help="Smallest liquid droplet fully separated before reaching the gas outlet")
+        sc1.metric("Bubble cut size (liquid phase, Stokes)", f"{sep_res.d_cut_liq_um:.0f} μm",
+                   help="Smallest gas bubble that rises clear of the liquid outlet")
         sc1.caption(f"Gas space {sep_res.gas_space_height_mm:.0f} mm · A_gas {sep_res.A_gas_m2:.3f} m²")
-        if n_inlets > 1:
-            sc1.caption(f"ℹ {n_inlets} symmetric inlets: cut sizes unchanged vs. single-inlet "
-                        f"(path length and velocity scale equally)")
 
         # Liquid hold-up
         sc2.metric("Hold-up time",  f"{sep_res.t_holdup_s/60:.1f} min",
