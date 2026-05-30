@@ -1903,74 +1903,124 @@ def main():
                 f"Gas outlet and liquid outlet each handle the full combined flow."
             )
 
-    with st.expander("**Separator sizing check**", expanded=True):
+    with st.expander("**Separator sizing (API 12J screening)**", expanded=True):
+        import math as _math
         sc1, sc2, sc3 = st.columns(3)
 
-        # ── Gas velocity (Souders-Brown, per inlet zone) ─────────────────────
-        # With n symmetric inlets the vessel splits into n parallel zones; the
-        # local gas velocity that drives liquid entrainment is Q_gas/n / A_gas.
-        # The gas outlet and mesh pad see the full Q_gas (both zones converge).
+        # ── Col 1: Gas capacity (Souders-Brown + mesh pad) ────────────────────
+        sc1.markdown("**Gas capacity**")
         gas_ratio = sep_res.U_act_ms / max(sep_res.U_max_ms, 1e-9)
-        _vel_label = (
-            f"Gas velocity — per inlet zone"
-            + (f" (Q/2 each, {n_inlets} inlets)" if n_inlets > 1 else "")
+        sc1.metric(
+            f"Gas velocity — body"
+            + (f" (per zone, {n_inlets} inlets)" if n_inlets > 1 else ""),
+            f"{sep_res.U_act_ms:.3f} m/s",
+            delta=f"{'OK' if sep_res.gas_velocity_ok else 'EXCEEDS MAX'} — {gas_ratio*100:.0f} % of max",
+            delta_color="normal" if sep_res.gas_velocity_ok else "inverse",
         )
-        sc1.metric(_vel_label, f"{sep_res.U_act_ms:.3f} m/s")
-        sc1.metric(f"Max gas velocity ({'K_pad' if has_meshpad else 'K_sb'} = {K_sb:.2f} m/s)",
-                   f"{sep_res.U_max_ms:.3f} m/s",
-                   delta=f"{'OK' if sep_res.gas_velocity_ok else 'EXCEEDS MAX'} — {gas_ratio*100:.0f} %",
-                   delta_color="normal" if sep_res.gas_velocity_ok else "inverse")
-        if n_inlets > 1:
-            sc1.caption(
-                f"Each inlet handles {sep_res.Q_gas_per_inlet_m3h:,.0f} m³/h gas "
-                f"+ {Q_liq_m3h/n_inlets:,.1f} m³/h liquid. "
-                f"Velocity check uses per-zone flow; cut sizes and residence times "
-                f"are invariant to inlet count."
-            )
+        sc1.caption(
+            f"Max = K × √(Δρ/ρ_g) = {sep_res.U_max_ms:.3f} m/s  "
+            f"(K = {K_sb:.2f} m/s, {'mesh pad' if has_meshpad else 'open vessel'})"
+        )
 
         if has_meshpad:
-            # Mesh pad at gas outlet — sees FULL Q_gas from both zones converging
-            import math as _math
+            # Mesh pad sees full Q_gas (both zones converge at the outlet)
             delta_rho_mp = max(0.0, rho_liq - rho_gas)
-            U_pad_max = K_pad * _math.sqrt(delta_rho_mp / max(rho_gas, 0.001))
-            A_pad_req = (Q_gas_m3h / 3600.0) / max(U_pad_max, 1e-9)
+            U_pad_max   = K_pad * _math.sqrt(delta_rho_mp / max(rho_gas, 0.001))
+            A_pad_req   = (Q_gas_m3h / 3600.0) / max(U_pad_max, 1e-9)
             A_pad_avail = sep_res.A_gas_m2
-            pad_load_pct = A_pad_req / max(A_pad_avail, 1e-9) * 100
-            pad_ok = A_pad_req <= A_pad_avail
-            sc1.metric("Mesh pad — area required (full Q_gas)",  f"{A_pad_req:.3f} m²")
-            sc1.metric("Mesh pad — area available", f"{A_pad_avail:.3f} m²",
-                       delta=f"{'OK' if pad_ok else 'UNDERSIZED'} — load {pad_load_pct:.0f} %",
+            pad_load    = A_pad_req / max(A_pad_avail, 1e-9) * 100
+            pad_ok      = A_pad_req <= A_pad_avail
+            sc1.metric("Mesh pad load (full Q_gas)", f"{pad_load:.0f} %",
+                       delta="OK" if pad_ok else "UNDERSIZED",
                        delta_color="normal" if pad_ok else "inverse")
-            sc1.caption(f"K_pad = {K_pad:.2f} m/s  ·  pad at gas outlet, handles combined flow from all zones")
+            sc1.caption(
+                f"Pad area req. {A_pad_req:.3f} m²  /  avail. {A_pad_avail:.3f} m²  "
+                f"·  K_pad = {K_pad:.2f} m/s"
+            )
 
-        sc1.metric("Gas residence time", f"{sep_res.t_gas_s/60:.1f} min")
-        sc1.metric("Droplet cut size (gas phase, Stokes)", f"{sep_res.d_cut_gas_um:.0f} μm",
-                   help="Smallest liquid droplet fully separated before reaching the gas outlet")
-        sc1.metric("Bubble cut size (liquid phase, Stokes)", f"{sep_res.d_cut_liq_um:.0f} μm",
-                   help="Smallest gas bubble that rises clear of the liquid outlet")
-        sc1.caption(f"Gas space {sep_res.gas_space_height_mm:.0f} mm · A_gas {sep_res.A_gas_m2:.3f} m²")
+        sc1.markdown("**Droplet / bubble cut sizes**")
+        sc1.metric("Liquid droplet cut size (gas phase)",
+                   f"{sep_res.d_cut_gas_um:.0f} μm",
+                   help="Smallest droplet that settles from gas before the outlet — drag-corrected Stokes")
+        sc1.metric("Gas bubble cut size (liquid phase)",
+                   f"{sep_res.d_cut_liq_um:.0f} μm",
+                   help="Smallest bubble that rises clear of liquid before the outlet — drag-corrected Stokes")
+        sc1.caption(
+            f"Gas space H = {sep_res.gas_space_height_mm:.0f} mm  "
+            f"·  A_gas = {sep_res.A_gas_m2:.3f} m²"
+            + (f"  ·  per-zone flow = {sep_res.Q_gas_per_inlet_m3h:,.0f} m³/h gas" if n_inlets > 1 else "")
+        )
 
-        # Liquid hold-up
-        sc2.metric("Hold-up time",  f"{sep_res.t_holdup_s/60:.1f} min",
+        # ── Col 2: Liquid capacity (API 12J retention + surge) ────────────────
+        sc2.markdown("**Liquid capacity**")
+        sc2.metric("Hold-up time at NLL",
+                   f"{sep_res.t_holdup_s/60:.1f} min",
                    delta=f"req. {t_holdup_req:.1f} min — {'OK' if sep_res.holdup_ok else 'SHORT'}",
                    delta_color="normal" if sep_res.holdup_ok else "inverse")
-        sc2.metric("Surge time",  f"{sep_res.t_surge_s/60:.1f} min",
+        sc2.metric("Surge time (NLL → LAHH)",
+                   f"{sep_res.t_surge_s/60:.1f} min",
                    delta=f"req. {t_surge_req:.1f} min — {'OK' if sep_res.surge_ok else 'SHORT'}",
                    delta_color="normal" if sep_res.surge_ok else "inverse")
-        sc2.metric("Liq. vol. at NLL (eff. zone)", f"{sep_res.V_liq_eff_m3:.3f} m³",
-                   f"{sep_res.V_liq_eff_m3*1000:.0f} L")
-        sc2.caption(f"Effective L = {sep_res.L_eff_mm:.0f} mm  ·  NLL {sep_res.nll_mm:.0f} mm  ·  "
-                    f"{n_inlets} inlet{'s' if n_inlets > 1 else ''}, path = {sep_res.L_eff_mm/n_inlets:.0f} mm each")
+        sc2.metric("Liquid vol. at NLL (eff. zone)",
+                   f"{sep_res.V_liq_eff_m3:.3f} m³",
+                   f"Surge Δvol = {sep_res.V_surge_eff_m3:.3f} m³")
+        sc2.caption(
+            f"NLL = {sep_res.nll_mm:.0f} mm  ({sep_res.nll_frac*100:.0f} % of Di)  "
+            f"·  Eff. L = {sep_res.L_eff_mm:.0f} mm"
+            + (f"  ·  path per inlet = {sep_res.L_eff_mm/n_inlets:.0f} mm" if n_inlets > 1 else "")
+        )
 
-        # Full-vessel liquid inventory
-        sc3.markdown("**Liquid inventory — full vessel incl. heads**")
+        # ── Col 3: Geometry checks + inlet momentum + inventory ───────────────
+        sc3.markdown("**Geometry & inlet checks**")
+
+        # Slenderness ratio (API 12J: 3–5 for horizontal separators)
+        ld = sep_res.LD_ratio
+        ld_ok = 3.0 <= ld <= 5.0
+        sc3.metric("Slenderness L/D  (shell T–T / Di)",
+                   f"{ld:.2f}",
+                   delta="OK (3–5)" if ld_ok else ("TOO SHORT" if ld < 3 else "VERY LONG"),
+                   delta_color="normal" if ld_ok else "inverse")
+
+        # Inlet nozzle ρv² — API RP 14E / GPSA limit 2 400 Pa (non-erosive service)
+        _RHO_V2_LIMIT = 2400.0  # Pa
+        inlet_nozzles = [
+            nz for nz, _, _, _, _ in nozzle_results
+            if nz.get("service") == "Inlet"
+        ]
+        if inlet_nozzles:
+            from engines.nozzle_geometry import NOZZLE_OD, NOZZLE_WALL_T, NOZZLE_WALL_SCH
+            _Q_mix_per_m3s = (Q_gas_m3h + Q_liq_m3h) / n_inlets / 3600.0
+            _rho_mix = (rho_gas * Q_gas_m3h + rho_liq * Q_liq_m3h) / max(Q_gas_m3h + Q_liq_m3h, 1e-9)
+            # Use first inlet nozzle for representative size
+            _nz0 = inlet_nozzles[0]
+            _OD  = NOZZLE_OD.get(_nz0["dn"], _nz0["dn"] * 1.05)
+            _rec = recommended_schedule(_nz0.get("pn", 25), code_key)
+            _t   = float(NOZZLE_WALL_SCH[_rec].get(_nz0["dn"], NOZZLE_WALL_T.get(_nz0["dn"], 8.0)))
+            _ID  = max(_OD - 2 * _t, 1.0)
+            _A_nz = _math.pi * (_ID * 1e-3) ** 2 / 4.0
+            _v_in = _Q_mix_per_m3s / max(_A_nz, 1e-9)
+            _rho_v2 = _rho_mix * _v_in ** 2
+            _rv2_ok = _rho_v2 <= _RHO_V2_LIMIT
+            sc3.metric(f"Inlet nozzle ρv² (DN{_nz0['dn']})",
+                       f"{_rho_v2:,.0f} Pa",
+                       delta=f"{'OK' if _rv2_ok else 'EXCEEDS 2 400 Pa'} — limit {_RHO_V2_LIMIT:.0f} Pa",
+                       delta_color="normal" if _rv2_ok else "inverse")
+            sc3.caption(
+                f"v_in = {_v_in:.2f} m/s  ·  ρ_mix = {_rho_mix:.1f} kg/m³  "
+                f"·  bore ID = {_ID:.0f} mm  (API RP 14E)"
+            )
+
+        sc3.markdown("**Liquid inventory (incl. heads)**")
         inv_rows = [
-            {"Level": "NLL",  "Height (mm)": f"{nll_mm_v:.0f}",  "Vol (m³)": f"{nll_vol:.3f}",  "Vol (L)": f"{nll_vol*1000:.0f}"},
-            {"Level": "LAHH", "Height (mm)": f"{lahh_mm_v:.0f}", "Vol (m³)": f"{lahh_vol:.3f}", "Vol (L)": f"{lahh_vol*1000:.0f}"},
-            {"Level": "Full", "Height (mm)": f"{Di:.0f}",        "Vol (m³)": f"{vol_res['total_m3']:.3f}", "Vol (L)": f"{vol_res['total_m3']*1000:.0f}"},
+            {"Level": "NLL",  "h (mm)": f"{nll_mm_v:.0f}",
+             "Vol (m³)": f"{nll_vol:.3f}", "Vol (L)": f"{nll_vol*1000:.0f}"},
+            {"Level": "LAHH", "h (mm)": f"{lahh_mm_v:.0f}",
+             "Vol (m³)": f"{lahh_vol:.3f}", "Vol (L)": f"{lahh_vol*1000:.0f}"},
+            {"Level": "Full", "h (mm)": f"{Di:.0f}",
+             "Vol (m³)": f"{vol_res['total_m3']:.3f}",
+             "Vol (L)": f"{vol_res['total_m3']*1000:.0f}"},
         ]
         sc3.dataframe(pd.DataFrame(inv_rows), hide_index=True, use_container_width=True)
-        sc3.caption("For liquid displacement / flooding calculations")
 
     # ── Volume table ──────────────────────────────────────────────────────────
     vol_res_disp = vessel_volumes(

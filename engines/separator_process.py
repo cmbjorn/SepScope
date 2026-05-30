@@ -28,9 +28,59 @@ def _cyl_area_m2(Di_mm: float, h_mm: float) -> float:
     return area_mm2 * 1e-6  # mm² → m²
 
 
-# ── Cut-size calculations (Stokes law, horizontal settler) ────────────────────
+# ── Drag-corrected cut-size calculations ─────────────────────────────────────
+#
+# The horizontal-settler criterion (API 12J / GPSA) requires that a
+# droplet/bubble reaches the gas-liquid interface before the horizontal flow
+# carries it to the outlet:
+#
+#   v_t_required = Q_flow × H_settle / (A_cross × L_eff)
+#
+# We then invert v_t → d using the appropriate drag regime:
+#   Stokes      (Re ≤ 0.1):  v_t = d² Δρ g / (18 μ_c)
+#   Intermediate (0.1–1000): Schiller-Naumann:
+#                             C_D = 24/Re × (1 + 0.15 Re^0.687)
+#                             solved iteratively from the Stokes seed
+#   Newton       (Re > 1000): C_D ≈ 0.44
+#                             v_t = d × √(4 Δρ g / (3 × 0.44 × ρ_c))
+#
+# Re is based on the continuous-phase properties.
 
 _g = 9.81  # m/s²
+
+
+def _d_from_vt(v_t_req: float, delta_rho: float,
+               mu_c: float, rho_c: float) -> float:
+    """
+    Return particle/bubble diameter (m) whose terminal velocity equals v_t_req.
+
+    Uses Stokes as a starting estimate, then applies Schiller-Naumann drag
+    correction iteratively until converged or the Newton regime is detected.
+    Returns 0 for degenerate inputs.
+    """
+    if v_t_req <= 0 or delta_rho <= 0 or mu_c <= 0 or rho_c <= 0:
+        return 0.0
+
+    # Stokes seed
+    d = math.sqrt(18.0 * mu_c * v_t_req / (delta_rho * _g))
+
+    for _ in range(20):
+        Re = rho_c * v_t_req * d / mu_c
+        if Re <= 0.1:
+            break  # Stokes is valid
+        if Re > 1000:
+            # Newton regime: C_D = 0.44
+            d = v_t_req / math.sqrt(4.0 * delta_rho * _g / (3.0 * 0.44 * rho_c))
+            break
+        # Schiller-Naumann: f = drag factor relative to Stokes
+        f = 1.0 + 0.15 * Re ** 0.687
+        d_new = math.sqrt(18.0 * mu_c * f * v_t_req / (delta_rho * _g))
+        if abs(d_new - d) < d * 1e-4:
+            d = d_new
+            break
+        d = d_new
+
+    return max(0.0, d)
 
 
 def cut_size_gas_um(
@@ -43,24 +93,21 @@ def cut_size_gas_um(
     L_eff_m: float,
 ) -> float:
     """
-    Minimum liquid-droplet diameter (μm) that settles out before reaching the gas outlet.
+    Minimum liquid-droplet diameter (μm) that settles from the gas phase.
 
-    Stokes horizontal-settler criterion:
-        d_cut² = 18 · μ_G · H_gas · v_gas / (Δρ · g · L_eff)
+    The required settling velocity (horizontal settler):
+        v_t = v_gas × H_gas / L_eff   where  v_gas = Q_gas / A_gas
 
-    where v_gas = Q_gas / A_gas (superficial gas velocity).
-
-    The formula is independent of the number of symmetric inlets because the
-    numerator (v_gas) and denominator (L_eff) scale equally.
-    Returns 0 if inputs are degenerate.
+    Drag regime is determined automatically (Stokes → Schiller-Naumann → Newton).
+    Continuous phase for Re: gas (ρ_gas, μ_gas).
+    Returns 0 for degenerate inputs.
     """
     delta_rho = max(0.0, rho_liq_kgm3 - rho_gas_kgm3)
-    denom = delta_rho * _g * max(L_eff_m, 1e-9)
-    if denom <= 0 or A_gas_m2 <= 0:
+    if delta_rho <= 0 or A_gas_m2 <= 0 or L_eff_m <= 0:
         return 0.0
-    v_gas = (Q_gas_m3h / 3600.0) / A_gas_m2
-    d_cut_m2 = 18.0 * mu_gas_Pas * h_gas_m * v_gas / denom
-    return math.sqrt(max(0.0, d_cut_m2)) * 1e6  # m → μm
+    v_gas   = (Q_gas_m3h / 3600.0) / A_gas_m2
+    v_t_req = v_gas * h_gas_m / max(L_eff_m, 1e-9)
+    return _d_from_vt(v_t_req, delta_rho, mu_gas_Pas, rho_gas_kgm3) * 1e6
 
 
 def cut_size_liq_um(
@@ -73,26 +120,22 @@ def cut_size_liq_um(
     L_eff_m: float,
 ) -> float:
     """
-    Minimum gas-bubble diameter (μm) that rises out of the liquid before reaching the
-    liquid outlet (carryunder cut size).
+    Minimum gas-bubble diameter (μm) that rises clear of the liquid phase.
 
-    Stokes horizontal-settler criterion:
-        d_cut² = 18 · μ_L · H_liq · v_liq / (Δρ · g · L_eff)
+    The required rise velocity (horizontal settler):
+        v_t = v_liq × H_liq / L_eff   where  v_liq = Q_liq / A_liq
 
-    where v_liq = Q_liq / A_liq (superficial liquid velocity).
-
-    For n symmetric inlets the liquid velocity in each zone is Q_liq/(n·A_liq) and
-    the path per zone is L_eff/n, so the ratio v_liq/L_eff_zone is unchanged —
-    the cut size is the same regardless of number of inlets.
-    Returns 0 if inputs are degenerate.
+    Drag regime determined automatically; continuous phase is liquid.
+    For n symmetric inlets v_liq and L_eff scale equally → result is
+    independent of inlet count.
+    Returns 0 for degenerate inputs.
     """
     delta_rho = max(0.0, rho_liq_kgm3 - rho_gas_kgm3)
-    denom = delta_rho * _g * max(L_eff_m, 1e-9)
-    if denom <= 0 or A_liq_m2 <= 0:
+    if delta_rho <= 0 or A_liq_m2 <= 0 or L_eff_m <= 0:
         return 0.0
-    v_liq = (Q_liq_m3h / 3600.0) / A_liq_m2
-    d_cut_m2 = 18.0 * mu_liq_Pas * h_liq_m * v_liq / denom
-    return math.sqrt(max(0.0, d_cut_m2)) * 1e6  # m → μm
+    v_liq   = (Q_liq_m3h / 3600.0) / A_liq_m2
+    v_t_req = v_liq * h_liq_m / max(L_eff_m, 1e-9)
+    return _d_from_vt(v_t_req, delta_rho, mu_liq_Pas, rho_liq_kgm3) * 1e6
 
 
 # ── Result dataclass ──────────────────────────────────────────────────────────
@@ -125,11 +168,14 @@ class SeparatorProcessResult:
     V_total_at_lahh_m3: float
     V_total_vessel_m3: float
 
-    # ── Geometry ──────────────────────────────────────────────────────────────
+    # ── Geometry & slenderness ────────────────────────────────────────────────
     L_eff_mm: float
     nll_mm: float
     lahh_mm: float
     gas_space_height_mm: float
+    LD_ratio: float          # L_shell / Di  — API 12J recommends 3–5
+    LD_eff: float            # L_eff / Di    — effective separation zone
+    nll_frac: float          # NLL / Di      — fill fraction at NLL (target ~0.5)
 
     # ── Inlet count (informational) ───────────────────────────────────────────
     n_inlets: int = 1
@@ -243,5 +289,8 @@ def separator_check(
         nll_mm             = nll_mm,
         lahh_mm            = lahh_mm,
         gas_space_height_mm = Di_mm - nll_mm,
+        LD_ratio           = L_shell_mm / max(Di_mm, 1.0),
+        LD_eff             = L_eff_mm   / max(Di_mm, 1.0),
+        nll_frac           = nll_mm     / max(Di_mm, 1.0),
         n_inlets           = n_inlets,
     )
