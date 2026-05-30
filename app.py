@@ -1088,17 +1088,26 @@ def _nozzle_placement_checks(
             ))
 
     # H — Bottom nozzles: longitudinal seam advisory
+    # This is a standard fabrication coordination note, not a defect.
+    # The seam position is always specified on the fabrication drawing (MDS / material
+    # specification) and is routinely placed away from nozzles — no relocation of the
+    # nozzle is normally needed; only the seam placement note on the drawing.
     bottom_nz = [g for g in shell_nz if g["loc"] == "Shell — bottom"]
     if bottom_nz:
         tags = [g["tag"] for g in bottom_nz]
         checks.append(_NozzleCheck(
             level="info", tags=tags,
             code_ref="Fabrication practice / code weld exclusion",
-            headline=f"Bottom nozzle(s) {', '.join(tags)}: confirm clearance from longitudinal seam.",
-            detail="Rolled-plate shells typically have their longitudinal (long) seam at or near the bottom "
-                   "(6 o'clock). A nozzle must be ≥ max(3t_shell, 25 mm) clear of this seam.",
-            impact="Coordinate with fabricator on seam position. If the seam conflicts, it must be relocated "
-                   "(plate re-rolling or different seam position), adding cost and lead-time.",
+            headline=f"Bottom nozzle(s) {', '.join(tags)}: specify longitudinal seam away from nozzle(s) on fabrication drawing.",
+            detail=f"Rolled-plate shells have one longitudinal (long seam) weld that must be ≥ max(3·t_shell, 25 mm) "
+                   f"= {min_shell_clr:.0f} mm clear of any nozzle OD edge. "
+                   "This is normal practice for vessels with bottom nozzles — the seam position is simply called out on "
+                   "the MDS / fabrication drawing. The fabricator rotates the plate so the seam lands at, for example, "
+                   "the 3 o'clock or 9 o'clock position. No nozzle relocation is required.",
+            impact="Add a note to the fabrication drawing: "
+                   "'Longitudinal seam shall be positioned min. "
+                   f"{min_shell_clr:.0f} mm clear of all nozzle OD edges at the bottom of the vessel.' "
+                   "This is a routine instruction with no cost or schedule impact.",
         ))
 
     # I — Multi-course girth weld advisory (general)
@@ -1118,6 +1127,461 @@ def _nozzle_placement_checks(
     order = {"error": 0, "warning": 1, "info": 2}
     checks.sort(key=lambda c: order.get(c.level, 3))
     return checks
+
+
+# ──────────────────────── ENDCAP NOZZLE ANALYSIS ─────────────────────────────
+
+# All head types with standard defaults used in alternative-head comparison.
+_ENDCAP_ALT_HEADS: list[tuple] = [
+    # (HeadType, display label, override kwargs for nozzle_on_head)
+    (HeadType.HEMISPHERICAL,  "Hemispherical",              {}),
+    (HeadType.ELLIPSOIDAL,    "Ellipsoidal 2:1",            {"ellipse_ratio": 2.0}),
+    (HeadType.TORISPHERICAL,  "Tori — Klöpper (r=0.10Di)", {"crown_ratio": 1.0, "knuckle_ratio": 0.10}),
+    (HeadType.FLANGED_DISHED, "F&D — ASME (r=0.06Di)",     {}),
+    (HeadType.CONICAL,        "Conical 30°",                {"alpha_deg_cone": 30.0}),
+    (HeadType.FLAT,           "Flat",                       {}),
+]
+
+_ENDCAP_HEAD_NOTES: dict[str, str] = {
+    "Hemispherical":              "No knuckle — entire head face is usable; depth = R (Di/2); most expensive to form.",
+    "Ellipsoidal 2:1":            "Stress reversal at r ≈ 0.577·R; compressive hoop beyond → detailed check or FEA.",
+    "Tori — Klöpper (r=0.10Di)": "Crown to r_cj ≈ 0.80·R; knuckle zone beyond → standard rules invalid.",
+    "F&D — ASME (r=0.06Di)":     "Shallower knuckle → larger crown zone (r_cj ≈ 0.86·R); shallower head.",
+    "Conical 30°":                "No distinct knuckle; full face is 'cone' zone; apex & junction need separate checks.",
+    "Flat":                       "No curvature benefit; requires thick plate; suitable for low pressure / small Di only.",
+}
+
+
+def _hex_alpha(hex_color: str, alpha: float = 0.25) -> str:
+    """Convert #rrggbb hex to rgba(r,g,b,alpha) string."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def _nozzle_zone_color(nres) -> str:
+    """Traffic-light colour for a nozzle result."""
+    if not nres.geom_ok:          return "#dc2626"
+    if nres.code_ok is False:     return "#dc2626"
+    if nres.zone == "knuckle":    return "#d97706"
+    if nres.code_ok is None:      return "#d97706"
+    return "#16a34a"
+
+
+def _endcap_face_figure(
+    head_type: HeadType, Di: float,
+    R_c: float, r_k: float, b: float,
+    t_head_nom: float,
+    nozzle_data: list,   # list of (nz_dict, nres)
+    title: str = "",
+) -> go.Figure:
+    """
+    Face-on view of one endcap (looking axially inward).
+    Shows crown/knuckle zone fills, weld-exclusion ring, and each nozzle OD circle.
+    All nozzles are placed on the vertical centre axis of the head (x = 0),
+    at the signed vertical position y = R − d_from_top.
+    """
+    R = Di / 2.0
+    min_weld_clr = max(3.0 * t_head_nom, 25.0)
+
+    N = 200
+    theta_pts = [i / N * 2 * math.pi for i in range(N + 1)]
+    ux = [math.cos(t) for t in theta_pts]
+    uy = [math.sin(t) for t in theta_pts]
+
+    fig = go.Figure()
+
+    # Normalise F&D → torispherical for zone drawing
+    _ht, _Rc, _rk = head_type, R_c, r_k
+    if _ht == HeadType.FLANGED_DISHED:
+        _ht = HeadType.TORISPHERICAL
+        _Rc = _FD_CROWN_RATIO * Di
+        _rk = _FD_KNUCKLE_RATIO * Di
+
+    # ── Head zone fills ───────────────────────────────────────────────────────
+    if _ht == HeadType.TORISPHERICAL:
+        tg = _tori_geometry(Di, _Rc, _rk)
+        r_cj = tg["r_cj"]
+        # Crown zone (filled inner circle)
+        fig.add_trace(go.Scatter(
+            x=[r_cj * u for u in ux], y=[r_cj * u for u in uy],
+            fill="toself", fillcolor="rgba(34,197,94,0.20)",
+            line=dict(color="rgba(0,0,0,0)"),
+            name=f"Crown zone — standard analysis OK (r ≤ {r_cj:.0f} mm)",
+            hoverinfo="skip",
+        ))
+        # Knuckle zone (annulus)
+        fig.add_trace(go.Scatter(
+            x=[R * u for u in ux] + [r_cj * u for u in reversed(ux)],
+            y=[R * u for u in uy] + [r_cj * u for u in reversed(uy)],
+            fill="toself", fillcolor="rgba(245,158,11,0.22)",
+            line=dict(color="rgba(0,0,0,0)"),
+            name="Knuckle zone — specialist analysis required",
+            hoverinfo="skip",
+        ))
+        # Crown/knuckle boundary circle
+        fig.add_trace(go.Scatter(
+            x=[r_cj * u for u in ux], y=[r_cj * u for u in uy],
+            mode="lines", line=dict(color="#16a34a", width=1.8, dash="dash"),
+            name=f"Crown/knuckle boundary  r = {r_cj:.0f} mm",
+            hoverinfo="skip",
+        ))
+
+    elif _ht == HeadType.ELLIPSOIDAL:
+        _k = max(Di / (2.0 * b), 1.001)
+        r_rev = R / math.sqrt(_k * _k - 1.0)
+        fig.add_trace(go.Scatter(
+            x=[r_rev * u for u in ux], y=[r_rev * u for u in uy],
+            fill="toself", fillcolor="rgba(34,197,94,0.20)",
+            line=dict(color="rgba(0,0,0,0)"),
+            name=f"Tensile hoop zone — standard analysis OK (r ≤ {r_rev:.0f} mm)",
+            hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=[R * u for u in ux] + [r_rev * u for u in reversed(ux)],
+            y=[R * u for u in uy] + [r_rev * u for u in reversed(uy)],
+            fill="toself", fillcolor="rgba(245,158,11,0.22)",
+            line=dict(color="rgba(0,0,0,0)"),
+            name="Compressive hoop zone — detailed analysis needed",
+            hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=[r_rev * u for u in ux], y=[r_rev * u for u in uy],
+            mode="lines", line=dict(color="#16a34a", width=1.8, dash="dash"),
+            name=f"Hoop-stress reversal  r = {r_rev:.0f} mm",
+            hoverinfo="skip",
+        ))
+
+    else:
+        # Hemispherical, Conical, Flat — full face is usable zone
+        fig.add_trace(go.Scatter(
+            x=[R * u for u in ux], y=[R * u for u in uy],
+            fill="toself", fillcolor="rgba(34,197,94,0.18)",
+            line=dict(color="rgba(0,0,0,0)"),
+            name="Full head face — code analysis applicable throughout",
+            hoverinfo="skip",
+        ))
+
+    # ── Weld-exclusion ring ───────────────────────────────────────────────────
+    r_excl = R - min_weld_clr
+    if r_excl > 10:
+        fig.add_trace(go.Scatter(
+            x=[R * u for u in ux] + [r_excl * u for u in reversed(ux)],
+            y=[R * u for u in uy] + [r_excl * u for u in reversed(uy)],
+            fill="toself", fillcolor="rgba(220,38,38,0.10)",
+            line=dict(color="rgba(0,0,0,0)"),
+            name=f"Weld-exclusion ring ≥ {min_weld_clr:.0f} mm from head-shell seam",
+            hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=[r_excl * u for u in ux], y=[r_excl * u for u in uy],
+            mode="lines", line=dict(color="#dc2626", width=1.2, dash="dot"),
+            showlegend=False, hoverinfo="skip",
+        ))
+
+    # ── Vessel inner wall circle ──────────────────────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=[R * u for u in ux], y=[R * u for u in uy],
+        mode="lines", line=dict(color="#1d4ed8", width=2.5),
+        name=f"Head inner wall  Di = {Di:.0f} mm",
+        hoverinfo="skip",
+    ))
+
+    # ── Axis cross ────────────────────────────────────────────────────────────
+    d = R * 0.05
+    for xs, ys in [([-d, d], [0, 0]), ([0, 0], [-d, d])]:
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines",
+                                 line=dict(color="#94a3b8", width=1.2),
+                                 showlegend=False, hoverinfo="skip"))
+
+    # ── Nozzle circles ────────────────────────────────────────────────────────
+    N_nz = 120
+    nz_theta = [i / N_nz * 2 * math.pi for i in range(N_nz + 1)]
+
+    for nz_dict, nres in nozzle_data:
+        nc  = _nozzle_zone_color(nres)
+        ny  = nres.y_nozzle_mm
+        nOR = nres.nozzle_OR_mm
+        bore = max(nres.nozzle_OD_mm - 2 * nres.nozzle_t_mm, 1.0)
+        bOR  = bore / 2.0
+        code_str = "OK" if nres.code_ok is True else ("?" if nres.code_ok is None else "FAIL")
+        hover = (
+            f"<b>{nz_dict['tag']}</b> — {nz_dict['service']}<br>"
+            f"DN{nz_dict['dn']}  OD {nres.nozzle_OD_mm:.1f} mm<br>"
+            f"Vertical: {ny:+.0f} mm from axis<br>"
+            f"Radial: r = {nres.r_from_axis_mm:.0f} mm  (r/R = {nres.r_from_axis_mm / R:.2f})<br>"
+            f"Zone: {nres.zone.replace('_', ' ')}  ·  Code: {code_str}<br>"
+            f"Edge → shell wall: {nres.edge_to_shell_mm:.0f} mm"
+        )
+        if nres.edge_to_knuckle_mm is not None:
+            hover += f"<br>Edge → crown boundary: {nres.edge_to_knuckle_mm:.0f} mm"
+
+        # OD circle (filled)
+        fig.add_trace(go.Scatter(
+            x=[nOR * math.cos(t) for t in nz_theta],
+            y=[ny + nOR * math.sin(t) for t in nz_theta],
+            fill="toself", fillcolor=_hex_alpha(nc, 0.22),
+            line=dict(color=nc, width=2.5), mode="lines",
+            showlegend=False,
+            hovertemplate=hover + "<extra></extra>",
+        ))
+        # Bore ID circle (dashed)
+        fig.add_trace(go.Scatter(
+            x=[bOR * math.cos(t) for t in nz_theta],
+            y=[ny + bOR * math.sin(t) for t in nz_theta],
+            mode="lines", line=dict(color=nc, width=1.0, dash="dot"),
+            showlegend=False, hoverinfo="skip",
+        ))
+        # Tag annotation
+        fig.add_annotation(
+            x=0, y=ny + nOR + R * 0.03,
+            text=f"<b>{nz_dict['tag']}</b>",
+            showarrow=False, xanchor="center", yanchor="bottom",
+            font=dict(size=9, color=nc),
+            bgcolor="rgba(255,255,255,0.88)", borderpad=2,
+        )
+
+    # ── Layout ────────────────────────────────────────────────────────────────
+    lim = R * 1.22
+    fig.update_layout(
+        height=430,
+        margin=dict(l=5, r=5, t=36 if title else 12, b=5),
+        plot_bgcolor="white", paper_bgcolor="white",
+        title=dict(text=f"<b>{title}</b>",
+                   font=dict(size=11, color="#334155"), x=0.5) if title else {},
+        showlegend=True,
+        legend=dict(
+            orientation="h", x=0.5, y=-0.04,
+            xanchor="center", yanchor="top",
+            font=dict(size=8), bgcolor="rgba(255,255,255,0.92)",
+            bordercolor="#e2e8f0", borderwidth=1,
+        ),
+        xaxis=dict(range=[-lim, lim], scaleanchor="y", scaleratio=1,
+                   zeroline=False, showgrid=False, showticklabels=False),
+        yaxis=dict(range=[-lim, lim], zeroline=False, showgrid=False, showticklabels=False),
+    )
+    return fig
+
+
+def _compare_nozzle_on_all_heads(
+    Di: float, dn_mm: int, d_from_top_mm: float,
+    nozzle_OD_mm: float, nozzle_t_mm: float, t_head_nom_mm: float,
+    crown_ratio: float = 1.0, knuckle_ratio: float = 0.10,
+    alpha_deg_cone: float = 30.0, ellipse_ratio: float = 2.0,
+) -> list[dict]:
+    """Evaluate one nozzle placement against every alternative head type."""
+    rows: list[dict] = []
+    base_kw = dict(
+        crown_ratio=crown_ratio, knuckle_ratio=knuckle_ratio,
+        alpha_deg_cone=alpha_deg_cone, ellipse_ratio=ellipse_ratio,
+        nozzle_OD_mm=nozzle_OD_mm, nozzle_t_mm=nozzle_t_mm,
+        t_head_nom_mm=t_head_nom_mm,
+    )
+    for ht, label, override_kw in _ENDCAP_ALT_HEADS:
+        kw = {**base_kw, **override_kw}
+        res = nozzle_on_head(ht, Di, d_from_top_mm, dn_mm, **kw)
+        rows.append({"head_type": ht, "label": label, "res": res})
+    return rows
+
+
+def _endcap_edge_implications(
+    nres,
+    Di: float, t_head_nom_mm: float,
+    code_key: str,
+) -> list[dict]:
+    """
+    Return a list of {level, text} dicts describing engineering implications
+    of a nozzle's proximity to the endcap edge and zone boundaries.
+    Levels: "error" | "warning" | "info".
+    """
+    issues: list[dict] = []
+    R = Di / 2.0
+    r = nres.r_from_axis_mm
+    nOR = nres.nozzle_OR_mm
+    OD = nres.nozzle_OD_mm
+    bore_ID = max(OD - 2.0 * nres.nozzle_t_mm, 1.0)
+    edge_r = r + nOR
+    edge_to_shell = nres.edge_to_shell_mm
+    min_weld_clr = max(3.0 * t_head_nom_mm, 25.0)
+    code = "EN 13445-3" if code_key == "EN" else "ASME VIII Div.1"
+    cl_zone = "cl. 9 / UG-36" if code_key == "EN" else "UG-36 / UG-37"
+
+    # 1 — OD physically overlaps shell wall (fatal)
+    if not nres.geom_ok and edge_to_shell < 0:
+        issues.append(dict(level="error", text=(
+            f"**Nozzle OD overlaps the cylindrical shell** by {-edge_to_shell:.0f} mm — this geometry cannot be "
+            f"built as drawn. The nozzle must be moved toward the vessel axis (increase d_from_top toward Di/2) "
+            f"or a smaller DN must be used."
+        )))
+        return issues
+
+    # 2 — Weld clearance to head-shell circumferential seam
+    if 0 <= edge_to_shell < min_weld_clr:
+        level = "warning"
+        issues.append(dict(level=level, text=(
+            f"**Weld clearance shortfall** — nozzle OD edge is only **{edge_to_shell:.0f} mm** from the "
+            f"vessel inner wall, below the minimum **{min_weld_clr:.0f} mm** (= max(3·t_head, 25 mm) "
+            f"per {code} cl. {'5.6 / UW-9' if code_key == 'EN' else 'UW-11'}).  \n"
+            f"**Why it matters:** The head-to-shell circumferential weld toe must not overlap the nozzle "
+            f"OD weld toe. Overlapping weld heat-affected zones create an uncontrolled metallurgical "
+            f"condition that increases cracking risk and prevents valid PWHT. Inspection access is also "
+            f"compromised.  \n"
+            f"**Resolution:** (a) Move nozzle toward axis by ≥ {min_weld_clr - edge_to_shell:.0f} mm; "
+            f"(b) switch to a **hemispherical head** (the head-shell weld moves to the apex, far from any "
+            f"nozzle — this is the most common fix for large nozzles on small vessels); "
+            f"(c) obtain a documented fabrication deviation agreed with the notified body (+4–8 weeks)."
+        )))
+
+    # 3 — Three-way stress near junction (even if weld clearance is technically met)
+    if 0 < edge_to_shell < 0.5 * (Di * 0.10):
+        issues.append(dict(level="warning", text=(
+            f"**Three-way stress concentration near the head-shell junction** — nozzle OD edge is only "
+            f"**{edge_to_shell:.0f} mm** from the vessel inner wall.  \n"
+            f"**Engineering explanation:** At this proximity the stress fields from the nozzle opening, "
+            f"the head/cylinder discontinuity bending, and the cylindrical shell hoop stress interact "
+            f"simultaneously. This 3-way combination is outside the scope of area-replacement "
+            f"formulas ({code} {cl_zone}), even when weld clearance is met.  \n"
+            f"**Resolution:** Full 3D FEA with mesh refinement at the junction. Add at least 4–8 weeks to "
+            f"the design schedule. Alternatively, move the nozzle significantly toward the axis or use a "
+            f"hemispherical head so the nozzle sits well clear of the tangent weld."
+        )))
+
+    # 4 — Nozzle centre in the knuckle (torispherical / ellipsoidal)
+    if nres.zone == "knuckle":
+        if nres.head_type in (HeadType.TORISPHERICAL, HeadType.FLANGED_DISHED):
+            issues.append(dict(level="error", text=(
+                f"**Nozzle centre in the knuckle transition zone** — standard area-replacement "
+                f"({code} {cl_zone}) is **not valid** in the knuckle.  \n"
+                f"**Engineering explanation:** The knuckle is a torus transition whose stress field "
+                f"combines membrane and bending components from both the spherical crown and the "
+                f"cylindrical shell. Adding a nozzle opening there creates a 3-way stress concentration "
+                f"(nozzle + knuckle bending + shell discontinuity) that no standard code formula covers.  \n"
+                f"**Resolution options:**  \n"
+                f"- Move nozzle toward the axis: d_from_top ≤ {nres.d_at_crown_end_mm:.0f} mm "
+                f"(for upper half) or ≥ {Di - nres.d_at_crown_end_mm:.0f} mm (for lower half).  \n"
+                f"- Switch to a **hemispherical head** — no knuckle, entire face is valid.  \n"
+                f"- Switch to **F&D (ASME)** — shallower knuckle gives a larger crown zone.  \n"
+                f"- Commission FEA per {code} cl. {'18 / Annex B' if code_key == 'EN' else 'Appendix 46'} "
+                f"(typically 3–6 weeks with independent review)."
+            )))
+        elif nres.head_type == HeadType.ELLIPSOIDAL:
+            issues.append(dict(level="warning", text=(
+                f"**Nozzle in the compressive-stress zone of the ellipsoidal head** (r = {r:.0f} mm, "
+                f"r/R = {r / R:.2f} > reversal boundary).  \n"
+                f"**Engineering explanation:** Beyond the hoop-stress reversal radius the circumferential "
+                f"membrane stress is compressive. Standard area-replacement assumes tensile hoop stress; "
+                f"in the compressive zone the formula is non-conservative. The nozzle also influences local "
+                f"buckling resistance of the compressive zone.  \n"
+                f"**Resolution:** Move nozzle toward the axis (d_from_top ≤ {nres.d_at_crown_end_mm:.0f} mm) "
+                f"or commission a detailed analysis / FEA."
+            )))
+
+    # 5 — Nozzle centre in crown zone but OD edge encroaches on boundary
+    elif nres.edge_to_knuckle_mm is not None and nres.edge_to_knuckle_mm < 0:
+        zone_name = ("knuckle" if nres.head_type in (HeadType.TORISPHERICAL, HeadType.FLANGED_DISHED)
+                     else "compressive-stress zone")
+        issues.append(dict(level="warning", text=(
+            f"**Nozzle OD edge encroaches on the {zone_name}** by {-nres.edge_to_knuckle_mm:.0f} mm — "
+            f"the nozzle centre is within the crown zone, but the outer OD circle crosses the boundary.  \n"
+            f"**Implication:** The reinforcement limit zone (which extends 2.5·t_head beyond the bore edge) "
+            f"will partially overlap the {zone_name}, where that material cannot be credited as valid "
+            f"reinforcement under standard rules. The effective A_available is overstated. A corrected "
+            f"calculation limiting the limit zone to the crown boundary is required."
+        )))
+
+    # 6 — Reinforcement limit zone extends into knuckle
+    if nres.head_type in (HeadType.TORISPHERICAL, HeadType.FLANGED_DISHED, HeadType.ELLIPSOIDAL):
+        rz_reach = min(2.5 * t_head_nom_mm, bore_ID / 2.0 + 2.5 * t_head_nom_mm)
+        rz_outer = r + OD / 2.0 + rz_reach
+        if nres.r_crown_end_mm is not None and rz_outer > nres.r_crown_end_mm:
+            overflow = rz_outer - nres.r_crown_end_mm
+            zone_name2 = ("knuckle" if nres.head_type != HeadType.ELLIPSOIDAL
+                          else "compressive-stress zone")
+            issues.append(dict(level="info", text=(
+                f"**Reinforcement limit zone overflows the crown boundary by ≈ {overflow:.0f} mm** — "
+                f"the code search window (≈ {rz_reach:.0f} mm beyond the bore edge) extends into the "
+                f"{zone_name2}, where material cannot be credited as valid reinforcement.  \n"
+                f"Recalculate A_available using a truncated limit zone that stops at the crown boundary "
+                f"r_cj = {nres.r_crown_end_mm:.0f} mm."
+            )))
+
+    # 7 — Large opening (bore / Di)
+    ratio = bore_ID / Di
+    if ratio > 0.5:
+        issues.append(dict(level="error", text=(
+            f"**Large opening: bore/Di = {ratio:.0%} > 50 %** — standard area-replacement is invalid. "
+            f"Pressure-area method or FEA is mandatory "
+            f"({'EN 13445-3 cl. 9.7' if code_key == 'EN' else 'ASME App 1-7 / Div.2'}). "
+            f"Reinforcing insert or integral forging likely required. Add 4–8 weeks for specialist analysis."
+        )))
+    elif ratio > 1 / 3:
+        issues.append(dict(level="warning", text=(
+            f"**Large opening: bore/Di = {ratio:.0%} > 33 %** — enhanced reinforcement check required "
+            f"({'EN 13445-3 cl. 9.5/9.7' if code_key == 'EN' else 'ASME UG-36(b)(1)'}). "
+            f"Confirm the reinforcement limit zone does not overflow into the knuckle or off the head."
+        )))
+
+    # 8 — Nozzle on a steeply curved surface (axial depth > 50 % of head depth)
+    if nres.head_depth_mm > 0 and nres.z_on_head_mm > 0.5 * nres.head_depth_mm:
+        issues.append(dict(level="info", text=(
+            f"**Nozzle sits at {nres.z_on_head_mm:.0f} mm axial depth "
+            f"({nres.z_on_head_mm / nres.head_depth_mm * 100:.0f} % of head depth "
+            f"{nres.head_depth_mm:.0f} mm)** — the weld is on a steeply curved surface.  \n"
+            f"Pre-weld inspection and compound-curvature awareness are required. NDT probe angles "
+            f"must be adjusted for the local curvature. Confirm this with the fabricator's weld engineer."
+        )))
+
+    return issues
+
+
+def _render_head_comparison_table(
+    comp_rows: list[dict], current_head_type: HeadType,
+) -> None:
+    """Render the alternative-head comparison as a dataframe."""
+    import pandas as pd
+    table: list[dict] = []
+    for row in comp_rows:
+        res = row["res"]
+        is_cur = row["head_type"] == current_head_type
+        cur_mark = "▶ " if is_cur else "  "
+
+        zone_map = {
+            "crown":        "✓ Crown",
+            "knuckle":      "⚠ Knuckle",
+            "cone":         "✓ Cone",
+            "flat":         "✓ Flat",
+            "outside_head": "✗ Outside",
+        }
+        zone_sym = zone_map.get(res.zone, res.zone)
+        geom_sym = "✓" if res.geom_ok else "✗"
+        code_sym = ("✓" if res.code_ok is True
+                    else ("?" if res.code_ok is None else "✗"))
+        e2s  = f"{res.edge_to_shell_mm:.0f} mm"
+        e2k  = (f"{res.edge_to_knuckle_mm:.0f} mm"
+                if res.edge_to_knuckle_mm is not None else "—")
+        depth = f"{res.head_depth_mm:.0f} mm"
+        crown_lim = (f"≤ {res.d_at_crown_end_mm:.0f} mm from top"
+                     if res.d_at_crown_end_mm is not None else "—")
+        note = _ENDCAP_HEAD_NOTES.get(row["label"], "")
+
+        table.append({
+            "Head type":         cur_mark + row["label"],
+            "Zone":              zone_sym,
+            "Geom":              geom_sym,
+            "Code":              code_sym,
+            "Edge→wall":         e2s,
+            "Edge→boundary":     e2k,
+            "Crown zone limit":  crown_lim,
+            "Head depth":        depth,
+            "Notes":             note,
+        })
+    df = pd.DataFrame(table)
+    st.dataframe(df, hide_index=True, use_container_width=True)
+    st.caption(
+        "▶ = currently selected head type  ·  Alternative heads use standard default geometry.  ·  "
+        "⚠ Knuckle = centre in knuckle zone (standard rules invalid).  ·  "
+        "? = code compliance uncertain (detailed analysis required)."
+    )
 
 
 # ──────────────────────── RESULT BADGE ───────────────────────────────────────
@@ -1466,13 +1930,50 @@ def main():
             help="Liquid volume at NLL ÷ liquid flow rate. Ensures enough liquid inventory "
                  "for stable level control. Typical: 1–3 min for well-instrumented separators.",
         )
-        t_surge_req = st.number_input(
-            "Required surge time (min)", min_value=0.5, max_value=60.0,
-            value=3.0, step=0.5, key="t_surge_req",
-            help="Time to fill from NLL to LAHH at full liquid flow rate. "
-                 "Represents the operator/control-system response window between the "
-                 "normal level and the high-high shutdown trip. Typical: 2–5 min.",
+
+        # Surge check — optional
+        include_surge_check = st.radio(
+            "Surge volume check", ["Required", "Not required"],
+            horizontal=True, key="include_surge",
+            help="Surge volume = time to fill from NLL to LAHH at full liquid flow rate. "
+                 "Disable when level control is fast-acting or surge buffering is provided elsewhere.",
+        ) == "Required"
+        t_surge_req = 3.0   # default when not required
+        if include_surge_check:
+            t_surge_req = st.number_input(
+                "Required surge time (min)", min_value=0.5, max_value=60.0,
+                value=3.0, step=0.5, key="t_surge_req",
+                help="Time to fill from NLL to LAHH at full liquid flow rate. "
+                     "Represents the operator/control-system response window. Typical: 2–5 min.",
+            )
+
+        st.divider()
+        st.markdown("**LDV — Liquid Design Volume**")
+        st.caption(
+            "Minimum liquid inventory required to fill downstream equipment that are "
+            "partially empty during operation or startup. "
+            "LDV = (VB → LZLL) × SF  +  (LALL → LAL)."
         )
+        include_ldv = _yn("Calculate LDV", "include_ldv")
+        vb_offset_mm = 0.0
+        ldv_sf = 1.5
+        if include_ldv:
+            vb_offset_mm = st.number_input(
+                "Minimum VB level — vessel bottom + (mm)",
+                min_value=0.0, max_value=float(Di * 0.25), value=0.0, step=25.0,
+                key="vb_offset_mm",
+                help="Raise the effective vessel bottom for LDV. Use to account for pump "
+                     "suction deadband, instrument dead zone, or settled solids. "
+                     "0 = use actual vessel bottom.",
+            )
+            ldv_sf = st.number_input(
+                "Safety factor — VB → LZLL zone",
+                min_value=1.0, max_value=3.0, value=1.5, step=0.05,
+                key="ldv_sf",
+                help="The VB→LZLL volume is multiplied by this factor before adding to the LDV. "
+                     "Accounts for instrument uncertainty, cavitation margin, and measurement deadband. "
+                     "Typical: 1.25–2.0.",
+            )
 
     # ── Sync nozzle widget values into session_state["nozzles"] ────────────────
     # The nozzle editor renders BELOW the chart, so we must pull the latest
@@ -1836,6 +2337,181 @@ def main():
                     else:
                         st.error(f"Flange FAIL  ·  {pn_label_str} < {P_barg:.1f} barg design")
 
+    # ── Endcap nozzle analysis ────────────────────────────────────────────────
+    _endcap_nz = [(nz, nres) for nz, nres, *_ in nozzle_results if nres is not None]
+    if _endcap_nz:
+        st.divider()
+        with st.expander(
+            "**Endcap nozzle analysis — edge proximity, zone evaluation & alternative head types**",
+            expanded=True,
+        ):
+            st.markdown(
+                "Detailed evaluation of nozzle placement on the endcaps. "
+                "For each endcap nozzle the section shows: **(1)** a face-on view of the head "
+                "with zone boundaries and nozzle OD circles; **(2)** engineering implications of "
+                "nozzle proximity to the edge of the head (weld clearance, knuckle zone, 3-way "
+                "stress); **(3)** how the same nozzle would behave on alternative head types."
+            )
+
+            # ── Face-on views (left and right head, side by side) ─────────────
+            _left_nz  = [(nz, nres) for nz, nres in _endcap_nz if nz["loc"] == "Left head"]
+            _right_nz = [(nz, nres) for nz, nres in _endcap_nz if nz["loc"] == "Right head"]
+
+            if _left_nz or _right_nz:
+                _fc1, _fc2 = st.columns(2)
+                if _left_nz:
+                    _fc1.plotly_chart(
+                        _endcap_face_figure(
+                            head_type, Di, R_c, r_k, b, head_res.t_nom_mm,
+                            _left_nz, "Left head — face-on view (looking inward)",
+                        ),
+                        use_container_width=True, config={"displayModeBar": False},
+                    )
+                if _right_nz:
+                    _fc2.plotly_chart(
+                        _endcap_face_figure(
+                            head_type, Di, R_c, r_k, b, head_res.t_nom_mm,
+                            _right_nz, "Right head — face-on view (looking inward)",
+                        ),
+                        use_container_width=True, config={"displayModeBar": False},
+                    )
+
+            st.markdown(
+                "> **Reading the face-on view:** Green fill = crown zone (standard analysis valid); "
+                "amber fill = knuckle / compressive-stress zone (specialist analysis required); "
+                "red ring = weld-exclusion zone (nozzle OD edge must stay inside). "
+                "Nozzles shown with OD circle (solid) and bore ID circle (dashed). "
+                "All nozzles are on the head's vertical centre plane (x = 0); "
+                "their vertical position reflects d_from_top."
+            )
+
+            st.divider()
+
+            # ── Per-nozzle detailed analysis ──────────────────────────────────
+            for nz, nres in _endcap_nz:
+                R_loc = Di / 2.0
+                r_loc = nres.r_from_axis_mm
+                nOR   = nres.nozzle_OR_mm
+                min_weld_clr_h = max(3.0 * head_res.t_nom_mm, 25.0)
+                nc    = _nozzle_zone_color(nres)
+
+                st.markdown(
+                    f"### {nz['tag']} — {nz['service']}  "
+                    f"<span style='font-size:0.85em;color:#64748b'>DN{nz['dn']}  ·  {nz['loc']}</span>",
+                    unsafe_allow_html=True,
+                )
+
+                # Key position metrics
+                _m1, _m2, _m3, _m4, _m5 = st.columns(5)
+                _m1.metric("r / R", f"{r_loc / R_loc:.3f}",
+                           help="Radial offset from vessel axis ÷ vessel radius. "
+                                "0 = on axis, 1.0 = at shell wall (not buildable).")
+                _m2.metric("Nozzle edge / R", f"{(r_loc + nOR) / R_loc:.3f}",
+                           help="Outer OD edge radius ÷ vessel radius. "
+                                "Values approaching 1.0 indicate the OD is close to the shell wall.")
+                _m3.metric(
+                    "Edge → shell wall",
+                    f"{nres.edge_to_shell_mm:.0f} mm",
+                    delta=("OK" if nres.edge_to_shell_mm >= min_weld_clr_h
+                           else f"< min {min_weld_clr_h:.0f} mm"),
+                    delta_color=("normal" if nres.edge_to_shell_mm >= min_weld_clr_h
+                                 else "inverse"),
+                    help=f"Clear distance from the nozzle OD edge to the vessel inner wall. "
+                         f"Minimum: max(3·t_head, 25 mm) = {min_weld_clr_h:.0f} mm.",
+                )
+                zone_display = nres.zone.replace("_", " ").capitalize()
+                _m4.metric("Zone", zone_display,
+                           help="Head zone where the nozzle centre sits. "
+                                "Crown = standard analysis valid; knuckle = specialist analysis required.")
+                _m5.metric("Head depth", f"{nres.head_depth_mm:.0f} mm",
+                           help="Axial depth of this head type (tangent to pole).")
+
+                if nres.edge_to_knuckle_mm is not None:
+                    _ek_col, _ = st.columns([1, 3])
+                    e2k = nres.edge_to_knuckle_mm
+                    _ek_col.metric(
+                        "Edge → crown boundary",
+                        f"{e2k:.0f} mm",
+                        delta=("Clear" if e2k >= 0 else f"Penetrates by {-e2k:.0f} mm"),
+                        delta_color="normal" if e2k >= 0 else "inverse",
+                        help="Distance from the nozzle OD edge to the crown/knuckle boundary. "
+                             "Negative = the outer edge of the nozzle OD circle is inside the knuckle zone.",
+                    )
+
+                # Axial depth on head and nozzle r/R ratio visual indicator
+                if nres.head_depth_mm > 0:
+                    depth_frac = nres.z_on_head_mm / nres.head_depth_mm
+                    _bar_pct = min(100, int(depth_frac * 100))
+                    _bar_col = "#16a34a" if _bar_pct < 50 else "#d97706" if _bar_pct < 75 else "#dc2626"
+                    st.markdown(
+                        f"<div style='margin:4px 0 8px 0'>"
+                        f"<span style='font-size:0.82em;color:#64748b'>"
+                        f"Axial depth on head surface: <b>{nres.z_on_head_mm:.0f} mm</b> "
+                        f"from tangent ({_bar_pct} % of head depth)</span><br>"
+                        f"<div style='background:#f1f5f9;border-radius:4px;height:8px;width:100%;margin-top:3px'>"
+                        f"<div style='background:{_bar_col};border-radius:4px;height:8px;"
+                        f"width:{_bar_pct}%'></div></div></div>",
+                        unsafe_allow_html=True,
+                    )
+
+                # ── Engineering implications ──────────────────────────────────
+                implications = _endcap_edge_implications(
+                    nres, Di, head_res.t_nom_mm, code_key,
+                )
+                if implications:
+                    st.markdown("**Engineering implications**")
+                    for issue in implications:
+                        if issue["level"] == "error":
+                            st.error(issue["text"], icon="🚫")
+                        elif issue["level"] == "warning":
+                            st.warning(issue["text"], icon="⚠️")
+                        else:
+                            st.info(issue["text"], icon="ℹ️")
+                else:
+                    st.success(
+                        f"No edge-proximity issues detected for {nz['tag']}. "
+                        "Nozzle is well within the crown zone with adequate weld clearance.",
+                        icon="✅",
+                    )
+
+                # ── Alternative head type comparison ──────────────────────────
+                st.markdown("**Alternative head type comparison**")
+                _comp = _compare_nozzle_on_all_heads(
+                    Di=Di, dn_mm=nz["dn"],
+                    d_from_top_mm=nres.d_from_top_mm,
+                    nozzle_OD_mm=nres.nozzle_OD_mm,
+                    nozzle_t_mm=nres.nozzle_t_mm,
+                    t_head_nom_mm=head_res.t_nom_mm,
+                    crown_ratio=crown_ratio, knuckle_ratio=knuckle_ratio,
+                    alpha_deg_cone=alpha_deg_cone, ellipse_ratio=ellipse_ratio,
+                )
+                _render_head_comparison_table(_comp, head_type)
+
+                # Summary insight
+                _ok_heads = [r["label"] for r in _comp
+                             if r["res"].geom_ok and r["res"].code_ok is True]
+                _warn_heads = [r["label"] for r in _comp
+                               if r["res"].geom_ok and r["res"].code_ok is None]
+                _fail_heads = [r["label"] for r in _comp
+                               if not r["res"].geom_ok or r["res"].code_ok is False]
+                if _ok_heads:
+                    st.success(
+                        f"**{nz['tag']} is code-compliant on:** {', '.join(_ok_heads)}.",
+                        icon="✅",
+                    )
+                if _warn_heads:
+                    st.warning(
+                        f"**Detailed analysis required on:** {', '.join(_warn_heads)}.",
+                        icon="⚠️",
+                    )
+                if _fail_heads:
+                    st.error(
+                        f"**Not compliant / not buildable on:** {', '.join(_fail_heads)}.",
+                        icon="🚫",
+                    )
+
+                st.divider()
+
     # ── Separator sizing check ────────────────────────────────────────────────
     vol_res = vessel_volumes(
         head_type, Di, L_shell, levels_mm_vol,
@@ -1848,6 +2524,56 @@ def main():
     lahh_vol = next((r["vol_m3"] for r in vol_res["levels"] if r["tag"] == "LAHH"), 0.0)
     nll_mm_v   = levels_mm_vol.get("NLL",  Di * 0.50)
     lahh_mm_v  = levels_mm_vol.get("LAHH", Di * 0.85)
+
+    # ── LDV — Liquid Design Volume ────────────────────────────────────────────
+    # LDV = minimum liquid inventory required to fill downstream equipment.
+    # Segment A: vessel bottom (+ offset) to LZLL, scaled by safety factor.
+    # Segment B: LALL to LAL (low-alarm response buffer).
+    # Volumes use full vessel including endcaps (vessel_volumes with include_heads=True).
+    _ldv_result: dict | None = None
+    if include_ldv:
+        _lzll_h = levels_mm_vol.get("LZLL", Di * 0.05)
+        _lall_h = levels_mm_vol.get("LALL", Di * 0.10)
+        _lal_h  = levels_mm_vol.get("LAL",  Di * 0.20)
+        _nll_h  = levels_mm_vol.get("NLL",  Di * 0.50)
+        _eff_vb = max(0.0, min(vb_offset_mm, _lzll_h - 1.0))  # clamp below LZLL
+
+        _ldv_levels_calc = {
+            "LDV_VB":   _eff_vb,
+            "LDV_LZLL": _lzll_h,
+            "LDV_LALL": _lall_h,
+            "LDV_LAL":  _lal_h,
+            "LDV_NLL":  _nll_h,
+        }
+        _ldv_vol = vessel_volumes(
+            head_type, Di, L_shell, _ldv_levels_calc,
+            crown_ratio=crown_ratio, knuckle_ratio=knuckle_ratio,
+            alpha_deg_cone=alpha_deg_cone, ellipse_ratio=ellipse_ratio,
+            include_heads=True,
+        )
+        _vmap = {r["tag"]: r["vol_m3"] for r in _ldv_vol["levels"]}
+
+        _seg_a_raw = max(0.0, _vmap.get("LDV_LZLL", 0.0) - _vmap.get("LDV_VB",   0.0))
+        _seg_a     = _seg_a_raw * ldv_sf
+        _seg_b     = max(0.0, _vmap.get("LDV_LAL",  0.0) - _vmap.get("LDV_LALL", 0.0))
+        _ldv_total = _seg_a + _seg_b
+        _ldv_nll_inv = max(0.0, _vmap.get("LDV_NLL", 0.0) - _vmap.get("LDV_VB",  0.0))
+        _ldv_ok    = _ldv_nll_inv >= _ldv_total
+
+        _ldv_result = {
+            "eff_vb_mm":    _eff_vb,
+            "lzll_mm":      _lzll_h,
+            "lall_mm":      _lall_h,
+            "lal_mm":       _lal_h,
+            "nll_mm":       _nll_h,
+            "seg_a_raw_m3": _seg_a_raw,
+            "seg_a_m3":     _seg_a,
+            "seg_b_m3":     _seg_b,
+            "ldv_total_m3": _ldv_total,
+            "nll_inv_m3":   _ldv_nll_inv,
+            "sf":           ldv_sf,
+            "ok":           _ldv_ok,
+        }
 
     # Count inlet nozzles for n_inlets parameter
     n_inlets = max(1, sum(1 for nz in st.session_state.get("nozzles", [])
@@ -1985,16 +2711,22 @@ def main():
             + (f"  ·  per-zone flow = {sep_res.Q_gas_per_inlet_m3h:,.0f} m³/h gas" if n_inlets > 1 else "")
         )
 
-        # ── Col 2: Liquid capacity (API 12J retention + surge) ────────────────
+        # ── Col 2: Liquid capacity (hold-up + optional surge) ────────────────
         sc2.markdown("**Liquid capacity**")
         sc2.metric("Hold-up time at NLL",
                    f"{sep_res.t_holdup_s/60:.1f} min",
                    delta=f"req. {t_holdup_req:.1f} min — {'OK' if sep_res.holdup_ok else 'SHORT'}",
                    delta_color="normal" if sep_res.holdup_ok else "inverse")
-        sc2.metric("Surge time (NLL → LAHH)",
-                   f"{sep_res.t_surge_s/60:.1f} min",
-                   delta=f"req. {t_surge_req:.1f} min — {'OK' if sep_res.surge_ok else 'SHORT'}",
-                   delta_color="normal" if sep_res.surge_ok else "inverse")
+        if include_surge_check:
+            sc2.metric("Surge time (NLL → LAHH)",
+                       f"{sep_res.t_surge_s/60:.1f} min",
+                       delta=f"req. {t_surge_req:.1f} min — {'OK' if sep_res.surge_ok else 'SHORT'}",
+                       delta_color="normal" if sep_res.surge_ok else "inverse")
+        else:
+            sc2.caption(
+                f"Surge time (NLL → LAHH): **{sep_res.t_surge_s/60:.1f} min** "
+                f"(informational — check not required)"
+            )
         sc2.metric("Liquid vol. at NLL (eff. zone)",
                    f"{sep_res.V_liq_eff_m3:.3f} m³",
                    f"Surge Δvol = {sep_res.V_surge_eff_m3:.3f} m³")
@@ -2054,6 +2786,99 @@ def main():
              "Vol (L)": f"{vol_res['total_m3']*1000:.0f}"},
         ]
         sc3.dataframe(pd.DataFrame(inv_rows), hide_index=True, use_container_width=True)
+
+        # ── LDV — Liquid Design Volume ────────────────────────────────────────
+        if _ldv_result is not None:
+            ldv = _ldv_result
+            st.divider()
+            st.markdown("**LDV — Liquid Design Volume**")
+            st.caption(
+                "Minimum liquid inventory required to fill downstream equipment that are "
+                "partially empty during operation or startup. "
+                "Volumes include full vessel geometry (cylinder + both endcaps)."
+            )
+
+            _lc1, _lc2, _lc3, _lc4 = st.columns(4)
+            _lc1.metric(
+                "Seg A — VB → LZLL (raw)",
+                f"{ldv['seg_a_raw_m3'] * 1000:.1f} L  ({ldv['seg_a_raw_m3']:.4f} m³)",
+                help=f"Volume from effective VB ({ldv['eff_vb_mm']:.0f} mm above vessel bottom) "
+                     f"to LZLL ({ldv['lzll_mm']:.0f} mm). "
+                     f"Before safety factor.",
+            )
+            _lc2.metric(
+                f"Seg A × SF {ldv['sf']:.2f}",
+                f"{ldv['seg_a_m3'] * 1000:.1f} L  ({ldv['seg_a_m3']:.4f} m³)",
+                delta=f"SF adds {(ldv['seg_a_m3'] - ldv['seg_a_raw_m3']) * 1000:.1f} L",
+                delta_color="off",
+                help=f"Segment A after safety factor {ldv['sf']:.2f}× — accounts for "
+                     "instrument deadband, pump cavitation margin, and measurement uncertainty.",
+            )
+            _lc3.metric(
+                "Seg B — LALL → LAL",
+                f"{ldv['seg_b_m3'] * 1000:.1f} L  ({ldv['seg_b_m3']:.4f} m³)",
+                help=f"Volume from LALL ({ldv['lall_mm']:.0f} mm) to LAL ({ldv['lal_mm']:.0f} mm). "
+                     "Low-alarm response buffer — liquid consumed between alarm and low-level action.",
+            )
+            _lc4.metric(
+                "LDV Total",
+                f"{ldv['ldv_total_m3'] * 1000:.1f} L  ({ldv['ldv_total_m3']:.4f} m³)",
+                delta=("OK — NLL inventory sufficient" if ldv["ok"]
+                       else "INSUFFICIENT — NLL inventory below LDV"),
+                delta_color="normal" if ldv["ok"] else "inverse",
+                help="Seg A (×SF) + Seg B. Must be ≤ available liquid inventory at NLL.",
+            )
+
+            # Breakdown table
+            _ldv_rows = [
+                {
+                    "Segment": "A — VB → LZLL",
+                    "From": f"{ldv['eff_vb_mm']:.0f} mm"
+                            + (f"  (VB + {ldv['eff_vb_mm']:.0f} mm)" if ldv["eff_vb_mm"] > 0 else "  (vessel bottom)"),
+                    "To": f"{ldv['lzll_mm']:.0f} mm  (LZLL)",
+                    "Raw volume": f"{ldv['seg_a_raw_m3']*1000:.1f} L",
+                    "× SF": f"{ldv['sf']:.2f}",
+                    "Effective volume": f"{ldv['seg_a_m3']*1000:.1f} L",
+                },
+                {
+                    "Segment": "B — LALL → LAL",
+                    "From": f"{ldv['lall_mm']:.0f} mm  (LALL)",
+                    "To": f"{ldv['lal_mm']:.0f} mm  (LAL)",
+                    "Raw volume": f"{ldv['seg_b_m3']*1000:.1f} L",
+                    "× SF": "1.00",
+                    "Effective volume": f"{ldv['seg_b_m3']*1000:.1f} L",
+                },
+                {
+                    "Segment": "LDV TOTAL",
+                    "From": "—", "To": "—",
+                    "Raw volume": "—",
+                    "× SF": "—",
+                    "Effective volume": f"**{ldv['ldv_total_m3']*1000:.1f} L**",
+                },
+            ]
+            st.dataframe(pd.DataFrame(_ldv_rows), hide_index=True, use_container_width=True)
+
+            # Inventory check
+            _inv_surplus = ldv["nll_inv_m3"] - ldv["ldv_total_m3"]
+            if ldv["ok"]:
+                st.success(
+                    f"LDV check passed — NLL inventory "
+                    f"**{ldv['nll_inv_m3']*1000:.1f} L** ≥ LDV **{ldv['ldv_total_m3']*1000:.1f} L** "
+                    f"(surplus: **{_inv_surplus*1000:.1f} L**).",
+                    icon="✅",
+                )
+            else:
+                st.error(
+                    f"LDV check failed — NLL inventory "
+                    f"**{ldv['nll_inv_m3']*1000:.1f} L** < LDV **{ldv['ldv_total_m3']*1000:.1f} L** "
+                    f"(shortfall: **{-_inv_surplus*1000:.1f} L**). "
+                    "Increase vessel size, raise NLL, lower LZLL, or reduce downstream equipment empty volume.",
+                    icon="🚫",
+                )
+            st.caption(
+                f"Available NLL inventory (VB+{ldv['eff_vb_mm']:.0f} mm → NLL {ldv['nll_mm']:.0f} mm, "
+                f"full vessel incl. endcaps): **{ldv['nll_inv_m3']*1000:.1f} L**"
+            )
 
     # ── Volume table ──────────────────────────────────────────────────────────
     vol_res_disp = vessel_volumes(
@@ -2129,6 +2954,11 @@ def main():
             L_baffle_mm=L_baffle_mm, baffle_open_pct=baffle_open_pct,
             K_sb=K_sb, n_inlets=n_inlets,
             P_op_barg=P_op_barg, T_op_C=T_op_C,
+            t_holdup_req_min=t_holdup_req,
+            t_surge_req_min=t_surge_req,
+            include_surge_check=include_surge_check,
+            ldv_result=_ldv_result,
+            Z_gas=Z_gas,
         ).encode("utf-8")
         st.session_state["report_fname"] = (
             f"datasheet_{vessel_tag.replace(' ','_')}_{_date.today().isoformat()}.html"

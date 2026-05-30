@@ -402,6 +402,11 @@ def generate_datasheet_html(
     n_inlets: int = 1,
     P_op_barg: float | None = None,
     T_op_C: float | None = None,
+    t_holdup_req_min: float = 3.0,
+    t_surge_req_min: float = 3.0,
+    include_surge_check: bool = True,
+    ldv_result: dict | None = None,
+    Z_gas: float = 1.0,
 ) -> str:
     from engines.nozzle_geometry import NOZZLE_OD, NOZZLE_WALL_T, NOZZLE_WALL_SCH, recommended_schedule
     import math as _m
@@ -487,6 +492,7 @@ def generate_datasheet_html(
     gas_kv = _kv(
         ("Fluid",                  gas_fluid),
         ("Mol. weight",            f"{gas_props.MW:.2f}  g/mol"),
+        ("Compressibility Z",      f"{Z_gas:.3f}"),
         ("Density at op. cond.",   f"{rho_g:.3f}  kg/m³"),
         ("Dynamic viscosity",      f"{mu_g:.1f}  μPa·s"),
     )
@@ -638,9 +644,12 @@ def generate_datasheet_html(
 
     # ── C  MECHANICAL DESIGN ──────────────────────────────────────────────────
     from engines import MATERIALS
-    mat  = MATERIALS.get(mat_key, {})
+    mat      = MATERIALS.get(mat_key, {})
     mat_name = mat.get("name", mat_key)
-    CA_mm = getattr(shell_res, "CA_mm", 3.0)  # fall back if not on result
+    CA_mm    = getattr(shell_res, "CA_mm", 3.0)
+    z_weld   = getattr(shell_res, "z",     1.0)
+    z_label  = ("1.0  (full radiography)" if z_weld >= 1.0
+                else f"{z_weld:.2f}  (partial radiography)")
 
     sec_c = _sec("C", "Mechanical Design", _kv(
         ("Inner diameter  Di",           f"{Di:,.0f}  mm"),
@@ -654,8 +663,8 @@ def generate_datasheet_html(
         ("Head thickness — nominal",     f"{head_res.t_nom_mm:.1f}  mm"),
         ("Material (shell & heads)",     mat_name),
         ("Allowable stress  fd",         f"{fd_MPa:.1f}  MPa  at {T_C:.0f} °C"),
-        ("Corrosion allowance  CA",      f"see input"),
-        ("Weld joint efficiency  z",     "1.0  (full radiography)"),
+        ("Corrosion allowance  CA",      f"{CA_mm:.1f}  mm"),
+        ("Weld joint efficiency  z",     z_label),
         ("Support type",                 "Saddle supports — 2 off"),
         ("Saddle position from tangent", f"{saddle_a_mm:.0f}  mm" if saddle_a_mm > 0 else "TBD"),
         ("Saddle width",                 f"{saddle_w_mm:.0f}  mm"),
@@ -695,20 +704,43 @@ def generate_datasheet_html(
             "≤ 100 %",
             A_pad_req <= A_pad_avail,
         ))
+    _surge_limit = (f"≥ {t_surge_req_min:.1f}  min  (required)"
+                    if include_surge_check else "Informational — check not required")
     sizing_rows += [
         _row("Liquid hold-up time at NLL",
              f"{sep_res.t_holdup_s/60:.1f}  min",
-             f"≥ {sep_res.t_holdup_s/60/sep_res.t_holdup_s*sep_res.t_holdup_s/60:.1f} min  (req.)",
+             f"≥ {t_holdup_req_min:.1f}  min  (required)",
              sep_res.holdup_ok),
         _row("Surge time  NLL → LAHH",
              f"{sep_res.t_surge_s/60:.1f}  min",
-             f"≥ req.",
-             sep_res.surge_ok),
+             _surge_limit,
+             sep_res.surge_ok if include_surge_check else None),
         _row("NLL fill fraction  (NLL / Di)  [target ~50 %]",
              f"{sep_res.nll_frac*100:.0f}  %",
              "40 – 60 %",
              0.35 <= sep_res.nll_frac <= 0.65),
     ]
+    # LDV rows
+    if ldv_result is not None:
+        ldv = ldv_result
+        sizing_rows += [
+            _row("LDV — Segment A (VB → LZLL, raw)",
+                 f"{ldv['seg_a_raw_m3']*1000:.1f}  L  ({ldv['seg_a_raw_m3']:.4f} m³)",
+                 f"VB = {ldv['eff_vb_mm']:.0f} mm  →  LZLL = {ldv['lzll_mm']:.0f} mm",
+                 None),
+            _row(f"LDV — Segment A × SF {ldv['sf']:.2f}",
+                 f"{ldv['seg_a_m3']*1000:.1f}  L  ({ldv['seg_a_m3']:.4f} m³)",
+                 "Safety factor applied",
+                 None),
+            _row("LDV — Segment B (LALL → LAL)",
+                 f"{ldv['seg_b_m3']*1000:.1f}  L  ({ldv['seg_b_m3']:.4f} m³)",
+                 f"LALL = {ldv['lall_mm']:.0f} mm  →  LAL = {ldv['lal_mm']:.0f} mm",
+                 None),
+            _row("LDV Total  (A×SF + B)  vs NLL inventory",
+                 f"{ldv['ldv_total_m3']*1000:.1f}  L",
+                 f"≤ NLL inventory {ldv['nll_inv_m3']*1000:.1f}  L  (VB → NLL, incl. heads)",
+                 ldv["ok"]),
+        ]
     if inlet_nzs:
         _nz0 = inlet_nzs[0][0]
         _, _A0 = _bore(_nz0)
@@ -731,16 +763,6 @@ def generate_datasheet_html(
              "informational",
              None),
     ]
-
-    # Fix the hold-up row (re-compute req properly)
-    for i, row in enumerate(sizing_rows):
-        if "Hold-up" in row[0]:
-            sizing_rows[i] = _row(
-                "Liquid hold-up time at NLL",
-                f"{sep_res.t_holdup_s/60:.1f}  min",
-                f"≥ required",
-                sep_res.holdup_ok,
-            )
 
     sec_d = _sec("D", "Separator Sizing  (API 12J screening)",
                  _dt(["Criterion", "Actual", "Limit", "Status"], sizing_rows))
@@ -818,18 +840,26 @@ def generate_datasheet_html(
         OD  = NOZZLE_OD.get(dn, dn * 1.05)
         rec = recommended_schedule(nz.get("pn", 25), code_key)
         t   = float(NOZZLE_WALL_SCH[rec].get(dn, NOZZLE_WALL_T.get(dn, 8.0)))
-        # Status: combine geometry + code + reinf + flange
-        geom_ok  = nres.geom_ok if nres else True
-        reinf_ok = rres.adequate if rres else True
-        all_ok   = geom_ok and fok and (reinf_ok is not False)
-        status_s = _status(all_ok)
 
-        notes = ""
-        if nres is not None and nz.get("service") == "Inlet":
-            nz_IR  = (OD - 2*t) / 2.0
-            nz_bot = (Di - nres.d_from_top_mm) - nz_IR
-            dist   = lzhh_mm - nz_bot
-            notes  = f"Inlet bottom {'submerged' if dist > 0 else 'clear'} at LZHH ({dist:+.0f} mm)"
+        geom_ok  = nres.geom_ok   if nres else True
+        code_ok  = nres.code_ok   if nres else True    # None = needs check
+        reinf_ok = rres.adequate  if rres else True
+        all_ok   = geom_ok and (code_ok is not False) and fok and (reinf_ok is not False)
+        # Downgrade to None (amber) if code zone needs a detailed check
+        ok_flag  = None if (all_ok and code_ok is None) else all_ok
+        status_s = _status(ok_flag)
+
+        note_parts = []
+        if nres is not None:
+            note_parts.append(f"Zone: {nres.zone.replace('_', ' ')}")
+            if nz.get("service") == "Inlet":
+                nz_IR  = (OD - 2*t) / 2.0
+                nz_bot = (Di - nres.d_from_top_mm) - nz_IR
+                dist   = lzhh_mm - nz_bot
+                note_parts.append(
+                    f"inlet bottom {'submerged' if dist > 0 else 'clear'} at LZHH ({dist:+.0f} mm)"
+                )
+        notes = "  |  ".join(note_parts)
 
         nz_rows.append([
             f"<b>{nz['tag']}</b>",
@@ -842,7 +872,7 @@ def generate_datasheet_html(
             f"{t:.1f}",
             rec,
             "RF",
-            status_s + (f"  {notes}" if notes else ""),
+            status_s + (f"  <span style='font-size:8pt;color:#555'>{_e(notes)}</span>" if notes else ""),
         ])
 
     sec_g = _sec("G", "Nozzle Schedule",
@@ -891,10 +921,14 @@ def generate_datasheet_html(
                  f'{notes_html}')
 
     # ── FOOTER ────────────────────────────────────────────────────────────────
+    not_for_construction = issued_for not in ("Construction",)
+    footer_warn = (
+        "  |  NOT FOR CONSTRUCTION" if not_for_construction else ""
+    )
     footer = (
         f'<div class="footer">'
-        f'Generated by <b>VesselCalc</b> · {_e(today)} · Rev A · Issued for {_e(issued_for)}<br>'
-        f'THIS DOCUMENT IS FOR {_e(issued_for.upper())} PURPOSES ONLY — NOT FOR CONSTRUCTION'
+        f'Generated by <b>VesselCalc</b> · {_e(today)} · Rev A · Issued for {_e(issued_for)}'
+        f'{_e(footer_warn)}'
         f'</div>'
     )
 
