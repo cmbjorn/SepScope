@@ -2388,24 +2388,28 @@ def main():
             reinf_s = ("✓" if (rres is None or rres.adequate) else "✗")
             flng_s  = "✓" if flange_ok_nz else "✗"
 
-            # Bottom of nozzle bore to LZHH (for inlet nozzles on heads)
-            lzhh_str = ""
+            # Key inlet dimensions for head nozzles
+            top_clr_str  = ""
+            lzhh_str     = ""
             if nres is not None:
-                nz_IR = (nz_OD - 2.0 * nz_t) / 2.0
-                nz_bot = (Di - nres.d_from_top_mm) - nz_IR
-                dist = lzhh_mm - nz_bot
-                lzhh_str = f"{dist:+.0f} mm ({'sub.' if dist > 0 else 'clear'})"
+                nz_IR    = (nz_OD - 2.0 * nz_t) / 2.0
+                nz_bot   = (Di - nres.d_from_top_mm) - nz_IR
+                top_clr  = nres.edge_to_shell_mm          # nozzle OD top → vessel crown ID
+                lzhh_d   = lzhh_mm - nz_bot
+                top_clr_str = f"{top_clr:.0f} mm"
+                lzhh_str    = f"{lzhh_d:+.0f} mm ({'sub.' if lzhh_d > 0 else 'clear'})"
 
             sched_rows.append({
-                "Tag":      nz["tag"],
-                "Service":  nz["service"],
-                "Location": nz["loc"],
-                "DN":       f"DN{nz['dn']}",
-                f"{pn_label}": str(nz.get("pn", "")),
-                "Geom":     geom_s,
-                "Reinf":    reinf_s,
-                "Flange":   flng_s,
-                "Inlet→LZHH": lzhh_str,
+                "Tag":            nz["tag"],
+                "Service":        nz["service"],
+                "Location":       nz["loc"],
+                "DN":             f"DN{nz['dn']}",
+                f"{pn_label}":    str(nz.get("pn", "")),
+                "Geom":           geom_s,
+                "Reinf":          reinf_s,
+                "Flange":         flng_s,
+                "OD top→crown":   top_clr_str,
+                "Bore bot→LZHH":  lzhh_str,
             })
         st.dataframe(pd.DataFrame(sched_rows), hide_index=True, use_container_width=True)
 
@@ -2423,26 +2427,56 @@ def main():
                     st.warning(msg, icon="⚠️")
 
                 if nres is not None:  # head nozzle — full geometry detail
-                    R_loc = Di / 2
+                    nz_IR  = (nz_OD - 2.0 * nz_t) / 2.0   # bore inner radius
+                    nz_bot = (Di - nres.d_from_top_mm) - nz_IR   # bore bottom from vessel bottom
+                    nz_top_clr = nres.edge_to_shell_mm          # nozzle OD top → vessel crown ID
+                    lzhh_dist  = lzhh_mm - nz_bot              # +ve = submerged, -ve = clear
+
+                    # ── Prominent inlet positioning metrics ──────────────────
+                    if nz.get("service") == "Inlet":
+                        st.markdown("**Inlet positioning**")
+                        _im1, _im2 = st.columns(2)
+                        _im1.metric(
+                            "Nozzle OD top → vessel crown ID",
+                            f"{nz_top_clr:.0f} mm",
+                            delta=("OK" if nz_top_clr >= max(3 * head_res.t_nom_mm, 25)
+                                   else ("Tight — check weld clearance"
+                                         if nz_top_clr > 0 else "OD overlaps shell")),
+                            delta_color=("normal" if nz_top_clr >= max(3 * head_res.t_nom_mm, 25)
+                                         else "inverse"),
+                            help="Vertical clearance from the top of the nozzle OD to the "
+                                 "vessel inner wall at the crown. Must be ≥ max(3·t_head, 25 mm) "
+                                 "to satisfy weld-toe clearance requirements.",
+                        )
+                        _im2.metric(
+                            "Nozzle bore bottom → LZHH",
+                            f"{lzhh_dist:+.0f} mm",
+                            delta=("Submerged at LZHH" if lzhh_dist > 0 else "Clear at LZHH"),
+                            delta_color=("inverse" if lzhh_dist > 0 else "normal"),
+                            help="Signed distance from the bottom of the inlet bore ID to LZHH. "
+                                 "Positive (red) = inlet opening is below LZHH — the nozzle will "
+                                 "be submerged when the vessel is at high-high level. "
+                                 "Negative (green) = inlet stays clear of liquid even at LZHH.",
+                        )
+                        st.divider()
+
+                    # ── Geometry detail table ────────────────────────────────
                     rows_ng = {
-                        "OD / wall":    f"{nz_OD:.1f} mm OD  /  {nz_t:.1f} mm wall  (ID = {nz_OD - 2*nz_t:.1f} mm)",
-                        "From top":     f"{nres.d_from_top_mm:.0f} mm",
-                        "y from axis":  f"{nres.y_nozzle_mm:+.1f} mm",
-                        "Axial depth":  f"{nres.z_on_head_mm:.1f} mm from tangent",
-                        "Zone":         nres.zone.replace("_", " ").capitalize(),
-                        "Edge to wall": f"{nres.edge_to_shell_mm:.1f} mm",
+                        "OD / wall":    f"{nz_OD:.1f} mm OD  /  {nz_t:.1f} mm wall  (bore ID = {nz_OD - 2*nz_t:.1f} mm)",
+                        "Centreline from top": f"{nres.d_from_top_mm:.0f} mm",
+                        "y from vessel axis":  f"{nres.y_nozzle_mm:+.1f} mm",
+                        "Axial depth on head": f"{nres.z_on_head_mm:.1f} mm from tangent",
+                        "Zone":                nres.zone.replace("_", " ").capitalize(),
+                        "Nozzle OD top → crown ID": f"{nz_top_clr:.1f} mm",
+                        "Bore bottom → LZHH":   f"{lzhh_dist:+.0f} mm",
                     }
                     if head_type == HeadType.TORISPHERICAL:
                         if nres.d_at_crown_end_mm is not None:
-                            rows_ng["Crown boundary"] = f"d = {nres.d_at_crown_end_mm:.0f} mm from top"
+                            rows_ng["Crown zone boundary"] = f"d ≤ {nres.d_at_crown_end_mm:.0f} mm from top"
                         if nres.edge_to_knuckle_mm is not None:
-                            rows_ng["Edge to knuckle"] = f"{nres.edge_to_knuckle_mm:.1f} mm"
-                    nz_IR = (nz_OD - 2.0 * nz_t) / 2.0
-                    nz_bot = (Di - nres.d_from_top_mm) - nz_IR
-                    dist = lzhh_mm - nz_bot
-                    rows_ng["Inlet bottom → LZHH"] = f"{dist:+.0f} mm ({'submerged at LZHH' if dist > 0 else 'clear at LZHH'})"
+                            rows_ng["Nozzle OD edge → knuckle"] = f"{nres.edge_to_knuckle_mm:.1f} mm"
                     for k, v in rows_ng.items():
-                        ca, cb = st.columns([1.4, 1.6])
+                        ca, cb = st.columns([1.6, 1.4])
                         ca.markdown(f"*{k}*"); cb.markdown(f"**{v}**")
                     st.caption(f"Schedule {rec}  ·  PN/Class {nz.get('pn', '')}")
                 else:  # shell nozzle — just reinforcement
