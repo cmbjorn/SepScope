@@ -1353,7 +1353,13 @@ def _endcap_face_figure(
         )
 
     # ── Layout ────────────────────────────────────────────────────────────────
-    lim = R * 1.22
+    # Expand axis range to fully contain any large nozzle OD + label.
+    _max_nz_reach = max(
+        (abs(nres.y_nozzle_mm) + nres.nozzle_OR_mm + R * 0.06
+         for _, nres in nozzle_data),
+        default=0.0,
+    )
+    lim = max(R * 1.15, _max_nz_reach)
     fig.update_layout(
         height=430,
         margin=dict(l=5, r=5, t=36 if title else 12, b=5),
@@ -1851,9 +1857,19 @@ def main():
             help="Contact width of saddle against vessel.",
         )
 
-        # ── Nozzle session-state init (UI is in the main area, below the drawing) ─
+        # ── Nozzle session-state init + proportional rescale when L_shell changes ──
         if "nozzles" not in st.session_state:
             st.session_state["nozzles"] = _default_nozzles(Di, L_shell)
+        else:
+            _prev_L_nz = st.session_state.get("_nozzle_prev_L_shell")
+            if _prev_L_nz is not None and _prev_L_nz != L_shell and _prev_L_nz > 0:
+                _ratio = L_shell / _prev_L_nz
+                for _nz in st.session_state["nozzles"]:
+                    if _nz.get("loc") not in ("Left head", "Right head"):
+                        _nz["axial_mm"] = float(
+                            min(round(_nz.get("axial_mm", L_shell / 2) * _ratio), L_shell)
+                        )
+        st.session_state["_nozzle_prev_L_shell"] = L_shell
 
         pn_options     = [p for p in EN_PN_RATINGS if p >= 1] if code_key == "EN" else list(ASME_CLASS_PRESSURE_20C.keys())
         pn_label       = "PN" if code_key == "EN" else "Class"
@@ -1920,7 +1936,11 @@ def main():
 
         st.divider()
         st.header("Separator process")
-        st.caption(f"Operating conditions from vessel parameters: **{P_barg:.1f} barg, {T_C:.0f} °C**")
+        st.caption(
+            f"Fluid properties at design conditions: **{P_barg:.1f} barg, {T_C:.0f} °C**"
+            + (f"  (operating: {P_op_barg:.1f} barg, {T_op_C:.0f} °C)"
+               if P_op_barg is not None and T_op_C is not None else "")
+        )
 
         L_baffle_mm = st.number_input(
             "Baffle setback from tangent (mm)", min_value=0.0, max_value=float(L_shell / 2),
@@ -2218,9 +2238,6 @@ def main():
         nozzle_checks=severity_map,
     )
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-    _ud1, *_ = st.columns([1, 6])
-    if _ud1.button("🔄 Update drawing", help="Click after editing the nozzle table below to refresh the sketch"):
-        st.rerun()
 
     # ── Inline nozzle editor — directly below the drawing ────────────────────
     nozzles: list[dict] = st.session_state["nozzles"]
@@ -2281,16 +2298,7 @@ def main():
         st.session_state["nozzles"] = _default_nozzles(Di, L_shell)
         st.rerun()
 
-    # ── Nozzle placement checks ───────────────────────────────────────────────
-    placement_checks = _nozzle_placement_checks(
-        nozzle_results, Di, L_shell,
-        t_shell_mm=shell_res.t_nom_mm,
-        t_head_mm=head_res.t_nom_mm,
-        saddle_a_mm=saddle_a_mm,
-        saddle_w_mm=saddle_w_mm,
-        code_key=code_key,
-    )
-
+    # ── Nozzle placement checks (reuse result already computed above) ─────────
     n_err  = sum(1 for c in placement_checks if c.level == "error")
     n_warn = sum(1 for c in placement_checks if c.level == "warning")
     n_info = sum(1 for c in placement_checks if c.level == "info")
@@ -2658,7 +2666,7 @@ def main():
         _lall_h = levels_mm_vol.get("LALL", Di * 0.10)
         _lal_h  = levels_mm_vol.get("LAL",  Di * 0.20)
         _nll_h  = levels_mm_vol.get("NLL",  Di * 0.50)
-        _eff_vb = max(0.0, min(vb_offset_mm, _lzll_h - 1.0))  # clamp below LZLL
+        _eff_vb = max(0.0, min(vb_offset_mm, max(0.0, _lzll_h)))  # clamp to [0, LZLL]
 
         _ldv_levels_calc = {
             "LDV_VB":   _eff_vb,
