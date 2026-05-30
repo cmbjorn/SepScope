@@ -407,6 +407,7 @@ def generate_datasheet_html(
     include_surge_check: bool = True,
     ldv_result: dict | None = None,
     Z_gas: float = 1.0,
+    lining_spec: dict | None = None,
 ) -> str:
     from engines.nozzle_geometry import NOZZLE_OD, NOZZLE_WALL_T, NOZZLE_WALL_SCH, recommended_schedule
     import math as _m
@@ -672,6 +673,27 @@ def generate_datasheet_html(
         ("Weight — operating",           "TBD (vendor)"),
         ("Weight — hydro test",          "TBD (vendor)"),
     ))
+
+    # Lining / surface treatment section (C.1 when specified)
+    if lining_spec:
+        ls = lining_spec
+        lining_rows: list[tuple[str, str]] = []
+        if ls.get("has_clad"):
+            lining_rows.append(("Internal cladding / weld overlay", ls["clad_material"]))
+            lining_rows.append(("Cladding thickness", f"{ls['clad_t_mm']:.1f}  mm  (min., after forming)"))
+            lining_rows.append(("Cladding does not contribute to", "pressure-bearing wall thickness"))
+            if ls.get("clad_note"):
+                lining_rows.append(("Cladding note", ls["clad_note"]))
+        if ls.get("has_enp"):
+            lining_rows.append(("Internal surface plating", ls["enp_type"]))
+            lining_rows.append(("Plating thickness", f"{ls['enp_t_um']:.0f}  µm  (min.)"))
+            lining_rows.append(("Plating does not contribute to", "pressure-bearing wall thickness"))
+            if ls.get("enp_note"):
+                lining_rows.append(("Plating note", ls["enp_note"]))
+        if ls.get("free_text"):
+            lining_rows.append(("Material / treatment notes", ls["free_text"]))
+        if lining_rows:
+            sec_c += _sec("C.1", "Internal Lining / Surface Treatment", _kv(*lining_rows))
 
     # ── D  SEPARATOR SIZING ───────────────────────────────────────────────────
     import math as _math

@@ -418,6 +418,7 @@ def generate_word_report(
     include_surge_check: bool = True,
     ldv_result: dict | None = None,
     Z_gas: float = 1.0,
+    lining_spec: dict | None = None,
 ) -> bytes:
     """Generate a comprehensive Word design report. Returns raw .docx bytes."""
     from engines.nozzle_geometry import NOZZLE_OD, NOZZLE_WALL_T, NOZZLE_WALL_SCH, recommended_schedule
@@ -594,6 +595,32 @@ def generate_word_report(
     if shell_res.warnings:
         for w in shell_res.warnings:
             _caption(doc, f"⚠  {w}")
+
+    # C.3 — Internal lining / surface treatment
+    if lining_spec:
+        ls = lining_spec
+        lining_pairs: list[tuple[str, str]] = []
+        if ls.get("has_clad"):
+            lining_pairs += [
+                ("Internal cladding / weld overlay", ls["clad_material"]),
+                ("Cladding thickness", f"{ls['clad_t_mm']:.1f} mm  (min., after forming)"),
+                ("Note", "Cladding does not contribute to pressure-bearing wall thickness"),
+            ]
+            if ls.get("clad_note"):
+                lining_pairs.append(("Cladding specification", ls["clad_note"]))
+        if ls.get("has_enp"):
+            lining_pairs += [
+                ("Internal surface plating", ls["enp_type"]),
+                ("Plating thickness", f"{ls['enp_t_um']:.0f} µm  (min.)"),
+                ("Note", "Plating does not contribute to pressure-bearing wall thickness"),
+            ]
+            if ls.get("enp_note"):
+                lining_pairs.append(("Plating specification", ls["enp_note"]))
+        if ls.get("free_text"):
+            lining_pairs.append(("Additional material / treatment notes", ls["free_text"]))
+        if lining_pairs:
+            _sub_heading(doc, "C.3  Internal Lining / Surface Treatment")
+            _kv_table(doc, lining_pairs)
 
     # ── D — Separator Sizing ──────────────────────────────────────────────────
     doc.add_page_break()

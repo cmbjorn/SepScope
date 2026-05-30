@@ -1686,6 +1686,92 @@ def main():
         z_weld = st.slider("Weld joint efficiency z", min_value=0.7, max_value=1.0,
                            value=1.0, step=0.05, key="z_weld")
 
+        # ── Internal lining / surface treatment ──────────────────────────────
+        with st.expander("Internal lining / surface treatment", expanded=False):
+
+            # Cladding or weld overlay
+            has_clad = st.radio("Cladding / weld overlay", ["No", "Yes"],
+                                horizontal=True, key="has_clad") == "Yes"
+            clad_material = ""
+            clad_t_mm     = 0.0
+            clad_note     = ""
+            if has_clad:
+                clad_material = st.selectbox(
+                    "Cladding material",
+                    ["316L Stainless Steel", "317L Stainless Steel",
+                     "Alloy 825 (UNS N08825)", "Alloy 625 (UNS N06625)",
+                     "Alloy 2205 Duplex", "Alloy 2507 Super Duplex",
+                     "Titanium Gr. 1", "Titanium Gr. 2",
+                     "Hastelloy C-276", "Monel 400",
+                     "Copper-Nickel 90/10", "Other (see notes)"],
+                    key="clad_material",
+                )
+                clad_t_mm = st.number_input(
+                    "Cladding thickness (mm)",
+                    min_value=1.0, max_value=30.0, value=3.0, step=0.5,
+                    key="clad_t_mm",
+                    help="Minimum cladding thickness after forming. "
+                         "Does not contribute to pressure-bearing wall thickness.",
+                )
+                clad_note = st.text_input(
+                    "Cladding note (optional)",
+                    value="", key="clad_note",
+                    placeholder="e.g. weld overlay per ASME IX / AWS D1.1",
+                )
+
+            # Electroless plating
+            has_enp = st.radio("Electroless plating", ["No", "Yes"],
+                               horizontal=True, key="has_enp") == "Yes"
+            enp_type   = ""
+            enp_t_um   = 0.0
+            enp_note   = ""
+            if has_enp:
+                enp_type = st.selectbox(
+                    "Plating type",
+                    ["Electroless Nickel Phosphorus (ENP) — medium-phos",
+                     "Electroless Nickel Phosphorus (ENP) — high-phos",
+                     "Electroless Nickel PTFE (EN-PTFE)",
+                     "Electroless Nickel Boron (ENB)",
+                     "Other (see notes)"],
+                    key="enp_type",
+                )
+                enp_t_um = st.number_input(
+                    "Plating thickness (µm)",
+                    min_value=5.0, max_value=500.0, value=75.0, step=5.0,
+                    key="enp_t_um",
+                    help="Typical ENP for corrosion service: 50–125 µm. "
+                         "Does not contribute to pressure wall thickness.",
+                )
+                enp_note = st.text_input(
+                    "Plating note (optional)",
+                    value="", key="enp_note",
+                    placeholder="e.g. per ASTM B733 SC4 Type 2",
+                )
+
+            # Free-text material notes
+            mat_free_text = st.text_area(
+                "Additional material / surface treatment notes",
+                value="", key="mat_free_text", height=90,
+                placeholder=(
+                    "e.g. HIC-tested plate per NACE MR0175 / ISO 15156; "
+                    "hardness limit 22 HRC; PWHT required; "
+                    "all internal welds to be ground flush before plating …"
+                ),
+            )
+
+        # Collect lining spec into a single dict for downstream use
+        lining_spec = {
+            "has_clad":     has_clad,
+            "clad_material": clad_material,
+            "clad_t_mm":    clad_t_mm,
+            "clad_note":    clad_note,
+            "has_enp":      has_enp,
+            "enp_type":     enp_type,
+            "enp_t_um":     enp_t_um,
+            "enp_note":     enp_note,
+            "free_text":    mat_free_text,
+        }
+
         st.divider()
         st.header("Endcap (head)")
 
@@ -3055,6 +3141,7 @@ def main():
             include_surge_check=include_surge_check,
             ldv_result=_ldv_result,
             Z_gas=Z_gas,
+            lining_spec=lining_spec,
         ).encode("utf-8")
         st.session_state["report_fname"] = (
             f"datasheet_{vessel_tag.replace(' ','_')}_{_date.today().isoformat()}.html"
@@ -3095,6 +3182,7 @@ def main():
             include_surge_check=include_surge_check,
             ldv_result=_ldv_result,
             Z_gas=Z_gas,
+            lining_spec=lining_spec,
         )
         st.session_state["report_docx_fname"] = (
             f"design_report_{vessel_tag.replace(' ','_')}_{_date.today().isoformat()}.docx"
