@@ -204,8 +204,13 @@ def _vessel_figure(
     has_meshpad: bool = True,
     nll_mm: float = 0.0,        # needed to position mesh pad (from vessel axis: nll - R)
     has_vortex_brk: bool = True,
+    nozzle_checks: dict | None = None,
 ) -> go.Figure:
-    """Horizontal side-view: both heads + full cylinder shell."""
+    """Horizontal side-view: both heads + full cylinder shell.
+
+    Internals such as inlet devices, mesh pads, and vortex breakers are not
+    rendered in the figure. Only baffle plates are shown in the sketch.
+    """
     R = Di / 2
     # F&D is drawn identically to torispherical with its fixed ratios
     if head_type == HeadType.FLANGED_DISHED:
@@ -444,12 +449,21 @@ def _vessel_figure(
         geom_ok  = nres.geom_ok if nres else True
         code_ok  = nres.code_ok if nres else None
         reinf_ok = rres.adequate if rres else True
-        if not geom_ok or reinf_ok is False:
+        # External checks mapping may override the visual severity for a nozzle
+        sev = None
+        if nozzle_checks and nz_cfg.get("tag") in nozzle_checks:
+            sev = nozzle_checks.get(nz_cfg.get("tag"))
+        if sev == "error":
             nc, nfill = "#dc2626", "rgba(220,38,38,0.22)"
-        elif code_ok is False or reinf_ok is None:
+        elif sev == "warning":
             nc, nfill = "#d97706", "rgba(217,119,6,0.22)"
         else:
-            nc, nfill = "#16a34a", "rgba(22,163,74,0.22)"
+            if not geom_ok or reinf_ok is False:
+                nc, nfill = "#dc2626", "rgba(220,38,38,0.22)"
+            elif code_ok is False or reinf_ok is None:
+                nc, nfill = "#d97706", "rgba(217,119,6,0.22)"
+            else:
+                nc, nfill = "#16a34a", "rgba(22,163,74,0.22)"
 
         hover = (
             f"<b>{nz_cfg['tag']}</b> — {nz_cfg['service']}<br>"
@@ -473,14 +487,29 @@ def _vessel_figure(
             fig.add_trace(go.Scatter(
                 x=[bx0, bx1, bx1, bx0, bx0],
                 y=[ny - hw, ny - hw, ny + hw, ny + hw, ny - hw],
-                fill="toself", fillcolor=nfill,
-                line=dict(color=nc, width=1.5),
+                fill="toself", fillcolor="rgba(255,255,255,0.95)",
+                line=dict(color=nc, width=2.8),
                 showlegend=False, hovertemplate=hover + "<extra></extra>",
             ))
             # Flange face (bold line at tip)
             fig.add_shape(type="line", x0=x_tip, x1=x_tip,
                           y0=ny - hw - 6, y1=ny + hw + 6,
-                          line=dict(color=nc, width=3))
+                          line=dict(color=nc, width=4))
+            # Nozzle opening marker
+            fig.add_trace(go.Scatter(
+                x=[x_tip], y=[ny], mode="markers",
+                marker=dict(size=min(11.0, hw * 1.9), color="white",
+                            line=dict(color=nc, width=2.4)),
+                showlegend=False, hoverinfo="skip",
+            ))
+            # Pulsing halo for problem nozzles (warning -> orange, error -> red)
+            if sev in ("warning", "error"):
+                pulse_col = "#d97706" if sev == "warning" else "#dc2626"
+                fig.add_trace(go.Scatter(
+                    x=[x_tip], y=[ny], mode="markers",
+                    marker=dict(size=min(40.0, hw * 6.0), color=pulse_col, opacity=0.0),
+                    showlegend=False, hoverinfo="skip",
+                ))
             # Tag label outside
             fig.add_annotation(
                 x=x_tip + sign * 12, y=ny,
@@ -503,15 +532,30 @@ def _vessel_figure(
             fig.add_trace(go.Scatter(
                 x=[nx - hw, nx + hw, nx + hw, nx - hw, nx - hw],
                 y=[y_wall, y_wall, y_tip, y_tip, y_wall],
-                fill="toself", fillcolor=nfill,
-                line=dict(color=nc, width=1.5),
+                fill="toself", fillcolor="rgba(255,255,255,0.95)",
+                line=dict(color=nc, width=2.8),
                 showlegend=False, hovertemplate=hover + "<extra></extra>",
             ))
             # Flange face (bold horizontal line at tip)
             fig.add_shape(type="line",
                           x0=nx - hw - 6, x1=nx + hw + 6,
                           y0=y_tip, y1=y_tip,
-                          line=dict(color=nc, width=3))
+                          line=dict(color=nc, width=4))
+            # Nozzle opening marker
+            fig.add_trace(go.Scatter(
+                x=[nx], y=[y_tip], mode="markers",
+                marker=dict(size=min(11.0, hw * 1.9), color="white",
+                            line=dict(color=nc, width=2.4)),
+                showlegend=False, hoverinfo="skip",
+            ))
+            # Pulsing halo for problem nozzles (warning -> orange, error -> red)
+            if sev in ("warning", "error"):
+                pulse_col = "#d97706" if sev == "warning" else "#dc2626"
+                fig.add_trace(go.Scatter(
+                    x=[nx], y=[y_tip], mode="markers",
+                    marker=dict(size=min(40.0, hw * 6.0), color=pulse_col, opacity=0.0),
+                    showlegend=False, hoverinfo="skip",
+                ))
             # Tag label
             fig.add_annotation(
                 x=nx, y=y_tip + sign * 12,
@@ -536,17 +580,30 @@ def _vessel_figure(
             fig.add_trace(go.Scatter(
                 x=[nx + cr * math.cos(t) for t in theta_pts],
                 y=[cr * math.sin(t) for t in theta_pts],
-                fill="toself", fillcolor=nfill,
-                line=dict(color=nc, width=1.5), showlegend=False,
+                fill="toself", fillcolor="rgba(255,255,255,0.95)",
+                line=dict(color=nc, width=3.0), showlegend=False,
                 hovertemplate=hover + "<extra></extra>",
             ))
             fig.add_trace(go.Scatter(
                 x=[nx + bore_r * math.cos(t) for t in theta_pts],
                 y=[bore_r * math.sin(t) for t in theta_pts],
-                fill="toself", fillcolor="rgba(255,255,255,0.9)",
-                line=dict(color=nc, width=0.8, dash="dot"), showlegend=False,
+                fill="toself", fillcolor="rgba(255,255,255,0.95)",
+                line=dict(color=nc, width=2.2, dash="dot"), showlegend=False,
                 hoverinfo="skip",
             ))
+            fig.add_trace(go.Scatter(
+                x=[nx], y=[0], mode="markers",
+                marker=dict(size=4, color=nc),
+                showlegend=False, hoverinfo="skip",
+            ))
+            # Pulsing halo for side nozzles
+            if sev in ("warning", "error"):
+                pulse_col = "#d97706" if sev == "warning" else "#dc2626"
+                fig.add_trace(go.Scatter(
+                    x=[nx], y=[0], mode="markers",
+                    marker=dict(size=min(40.0, cr * 6.0), color=pulse_col, opacity=0.0),
+                    showlegend=False, hoverinfo="skip",
+                ))
             fig.add_annotation(
                 x=nx, y=cr + 10,
                 text=f"<b>{nz_cfg['tag']}</b>",
@@ -580,80 +637,9 @@ def _vessel_figure(
                                    showarrow=False, xanchor="center", yanchor="bottom",
                                    font=dict(size=9, color=_bclr))
 
-    # ── Inlet devices (half-pipe distributor, inside cylindrical shell) ──────
-    if has_inlet_dev:
-        for nz_cfg, nres, _ in nozzle_results:
-            if nz_cfg.get("service") != "Inlet":
-                continue
-            loc = nz_cfg["loc"]
-            nz_OR = NOZZLE_OD.get(nz_cfg["dn"], nz_cfg["dn"] * 1.05) / 2
-            if loc == "Left head" and nres is not None:
-                # Place device just inside the tangent line (in the cylindrical shell)
-                nx = max(nz_OR * 1.2, 50.0)
-                ny = nres.y_nozzle_mm
-            elif loc == "Right head" and nres is not None:
-                nx = L_shell - max(nz_OR * 1.2, 50.0)
-                ny = nres.y_nozzle_mm
-            else:
-                continue
-            # Half-pipe: U-shape open downward, deflects flow away from liquid surface
-            hp = nz_OR * 0.9
-            fig.add_shape(type="line", x0=nx - hp, x1=nx + hp,
-                          y0=ny - hp * 2, y1=ny - hp * 2,
-                          line=dict(color="#0891b2", width=2))
-            fig.add_shape(type="line", x0=nx - hp, x1=nx - hp,
-                          y0=ny, y1=ny - hp * 2,
-                          line=dict(color="#0891b2", width=2))
-            fig.add_shape(type="line", x0=nx + hp, x1=nx + hp,
-                          y0=ny, y1=ny - hp * 2,
-                          line=dict(color="#0891b2", width=2))
-            fig.add_annotation(x=nx, y=ny - hp * 2 - 14, text="½-pipe",
-                               showarrow=False, xanchor="center", yanchor="top",
-                               font=dict(size=8, color="#0891b2"))
-
-    # ── Mesh pad demister ─────────────────────────────────────────────────────
-    # In a horizontal separator the demister is an UPRIGHT pad (vertical cross-section)
-    # that the gas must pass through before reaching the gas outlet nozzle.
-    # In side view it appears as a tall narrow vertical band at the GO axial position.
-    if has_meshpad:
-        # Find gas outlet axial position (first nozzle with service "Gas outlet")
-        _go_ax = L_shell / 2.0
-        for _nzc, _nres, _ in nozzle_results:
-            if _nzc.get("service") == "Gas outlet" and _nzc["loc"] not in ("Left head", "Right head"):
-                _go_ax = _nzc["axial_mm"]
-                break
-        pad_thick  = 100.0
-        y_nll_diag = max(-R, min(R, nll_mm - R))
-        pad_x0 = _go_ax - pad_thick / 2
-        pad_x1 = _go_ax + pad_thick / 2
-        pad_y0 = y_nll_diag
-        pad_y1 = R
-        # Draw mesh pad as a simple outlined rectangle with light fill — no busy hatching
-        fig.add_shape(type="rect", x0=pad_x0, x1=pad_x1, y0=pad_y0, y1=pad_y1,
-                      fillcolor="rgba(16,185,129,0.15)",
-                      line=dict(color="#059669", width=2, dash="dot"))
-        fig.add_annotation(x=_go_ax, y=pad_y1 + 14,
-                           text="Mesh pad", showarrow=False, xanchor="center",
-                           yanchor="bottom", font=dict(size=9, color="#059669"),
-                           bgcolor="rgba(255,255,255,0.75)", borderpad=1)
-
-    # ── Vortex breaker ────────────────────────────────────────────────────────
-    if has_vortex_brk:
-        for nz_cfg, nres, _ in nozzle_results:
-            if nz_cfg.get("service") != "Liquid outlet":
-                continue
-            vx = nz_cfg.get("axial_mm", L_shell / 2)
-            vy = -R   # bottom inner wall
-            nz_OR = NOZZLE_OD.get(nz_cfg["dn"], nz_cfg["dn"] * 1.05) / 2
-            arm = nz_OR * 0.75
-            # Vortex breaker = cross plate — two perpendicular fins inside nozzle bore
-            for dx, dy in ((arm, 0), (-arm, 0), (0, arm), (0, -arm)):
-                fig.add_shape(type="line", x0=vx, x1=vx + dx,
-                              y0=vy, y1=vy + dy,
-                              line=dict(color="#b45309", width=2.5))
-            fig.add_annotation(x=vx, y=vy - arm - 14, text="VB",
-                               showarrow=False, xanchor="center", yanchor="top",
-                               font=dict(size=8, color="#b45309"))
+    # Inlet device, mesh pad, and vortex-breaker visuals are intentionally omitted
+    # from the drawing. Baffle plates remain visible because they are part of the
+    # vessel internals layout that is useful for the sketch.
 
     # Di label inside cylinder
     fig.add_annotation(
@@ -764,14 +750,39 @@ def _vessel_figure(
                 font=dict(size=9, color="#64748b"),
             )
 
-    saddle_depth = (saddle_h + saddle_base_h + 60) if saddle_a_mm > 0 else 0
-    x_min = -(h_head + 180)
-    x_max = L_shell + h_head + 180
-    # y_lim must clear the tallest nozzle stub + label above the vessel axis.
-    # _y_nz_top was updated during the nozzle loop; add 30 mm breathing room.
-    _base_top = R + max(t_shell_nom, 20) + 130   # baffle labels + mesh pad annotation
-    y_lim     = max(_base_top, _y_nz_top + 30)
-    y_lim_bot = R + max(t_shell_nom, 20) + max(130, saddle_depth)
+    saddle_depth = (saddle_h + saddle_base_h + 40) if saddle_a_mm > 0 else 0
+    x_min = -(h_head + 80)
+    x_max = L_shell + h_head + 80
+    # y_lim: just enough clearance for nozzle stubs/labels; hard cap at 1 000 mm
+    # (equivalent to Di = 2 000 mm) so the canvas never feels too empty.
+    _base_top = R + max(t_shell_nom, 20) + 70
+    y_lim     = min(max(_base_top, _y_nz_top + 20), 1000)
+    y_lim_bot = min(R + max(t_shell_nom, 20) + max(70, saddle_depth), 1000)
+
+    # Build simple two-frame animation to 'flash' problem nozzles (pulse traces)
+    pulse_indices: list[int] = []
+    for i, tr in enumerate(fig.data):
+        # identify our pulse traces by the presence of a marker with opacity == 0
+        if hasattr(tr, 'marker') and getattr(tr.marker, 'opacity', None) == 0:
+            # ensure it's one of the larger halo traces (size > 20)
+            size = getattr(tr.marker, 'size', 0) or 0
+            if size and size > 12:
+                pulse_indices.append(i)
+
+    if pulse_indices:
+        frame_on = go.Frame(data=[go.Scatter(marker=dict(opacity=0.75)) for _ in pulse_indices],
+                            traces=pulse_indices, name="on")
+        frame_off = go.Frame(data=[go.Scatter(marker=dict(opacity=0.0)) for _ in pulse_indices],
+                             traces=pulse_indices, name="off")
+        fig.frames = [frame_on, frame_off]
+        # Add a small play control for the animation; autoplay when the figure first appears
+        fig.update_layout(updatemenus=[dict(type="buttons", showactive=False,
+                                            x=0.01, y=-0.14, xanchor="left",
+                                            buttons=[dict(label="Play",
+                                                          method="animate",
+                                                          args=[["on", "off"],
+                                                                {"frame": {"duration": 700, "redraw": False},
+                                                                 "fromcurrent": True, "transition": {"duration": 0}}])])])
 
     fig.update_layout(
         height=650,
@@ -890,29 +901,37 @@ def _nozzle_placement_checks(
             ))
 
     # B — Shell nozzle near saddle support
+    # A standard saddle wraps approximately ±60° from the 6 o'clock position
+    # (120° contact angle total).  Only "Shell — bottom" nozzles are inside
+    # that contact zone and need this check.
+    # "Shell — side" nozzles sit at 90° from the bottom — outside the contact
+    # zone for any saddle with ≤ 180° wrap.  "Shell — top" nozzles are on the
+    # diametrically opposite side and can never interact with the saddle.
     if saddle_a_mm > 0:
-        for g in shell_nz:
+        bottom_nz = [g for g in shell_nz if g["loc"] == "Shell — bottom"]
+        for g in bottom_nz:
             for sx in (saddle_a_mm, L_shell - saddle_a_mm):
                 gap = abs(g["axial"] - sx) - (g["OR"] + saddle_w_mm / 2.0)
                 if gap < 0:
                     checks.append(_NozzleCheck(
                         level="error", tags=[g["tag"]],
                         code_ref="Zick / EN 13445-3 cl.16",
-                        headline=f"{g['tag']} OD overlaps saddle at {sx:.0f} mm from left tangent.",
-                        detail=f"Nozzle OD extends {-gap:.0f} mm into the saddle contact zone. "
-                               "Nozzle-in-saddle interaction requires a dedicated local stress analysis.",
-                        impact="Fabrication impossible without relocating either the nozzle or the saddle. "
-                               "Significant rework if not caught early. Resolve at layout stage.",
+                        headline=f"{g['tag']} OD overlaps saddle at {sx:.0f} mm — nozzle is inside the saddle contact zone.",
+                        detail=f"Nozzle OD edge extends {-gap:.0f} mm into the saddle bearing area. "
+                               "A nozzle inside the saddle contact zone creates a stress concentration "
+                               "that is outside the scope of standard Zick analysis.",
+                        impact="Relocate the nozzle axially or reposition the saddle. "
+                               "Cannot be resolved by analysis alone — fabrication is not feasible as drawn.",
                     ))
                 elif gap < min_shell_clr:
                     checks.append(_NozzleCheck(
                         level="warning", tags=[g["tag"]],
                         code_ref="Zick / EN 13445-3 cl.16",
-                        headline=f"{g['tag']} is {gap:.0f} mm from saddle edge; min {min_shell_clr:.0f} mm recommended.",
-                        detail="Close proximity of a nozzle to a saddle horn creates combined bending and pressure stresses. "
-                               "Detailed local stress analysis (Zick method or FEA) is needed.",
-                        impact="Extra engineering analysis required (1–3 weeks). If stress is too high, "
-                               "the saddle must be repositioned or a reinforcing ring added.",
+                        headline=f"{g['tag']} is {gap:.0f} mm from saddle edge (min {min_shell_clr:.0f} mm recommended).",
+                        detail="The bottom nozzle is close to the saddle horn. Combined saddle bending and "
+                               "pressure stress at this location requires a Zick or FEA check.",
+                        impact="Detailed local stress analysis required (1–3 weeks). "
+                               "If stress is too high, move the nozzle or add a reinforcing ring.",
                     ))
 
     # C — Large opening ratio (bore / Di)
@@ -1504,6 +1523,24 @@ def main():
 
         nozzle_results.append((nz, nres, rres, flange_ok_nz, pn_at_T_nz))
 
+    # Compute placement checks and build a severity map for nozzle visuals
+    placement_checks = _nozzle_placement_checks(
+        nozzle_results, Di, L_shell,
+        t_shell_mm=shell_res.t_nom_mm, t_head_mm=head_res.t_nom_mm,
+        saddle_a_mm=saddle_a_mm, saddle_w_mm=saddle_w_mm,
+        code_key=code_key,
+    )
+    severity_map: dict[str, str] = {}
+    for ch in placement_checks:
+        for tag in ch.tags:
+            # preserve error over warning if multiple checks apply
+            if severity_map.get(tag) == "error":
+                continue
+            if ch.level == "error":
+                severity_map[tag] = "error"
+            elif ch.level == "warning":
+                severity_map.setdefault(tag, "warning")
+
     # ── Vessel drawing (full width) ───────────────────────────────────────────
     fig = _vessel_figure(
         head_type, Di, R_c, r_k, alpha_deg_cone, b,
@@ -1521,6 +1558,7 @@ def main():
         has_meshpad=has_meshpad,
         nll_mm=levels_mm_vol.get("NLL", Di * 0.5),
         has_vortex_brk=has_vortex_brk,
+        nozzle_checks=severity_map,
     )
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     _ud1, *_ = st.columns([1, 6])
