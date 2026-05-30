@@ -59,6 +59,61 @@ NOZZLE_WALL_T: dict[int, float] = {
     600: 9.5, 700: 11.1, 800: 12.7,
 }
 
+# Wall thickness (mm) by pipe schedule — ASME B36.10M / B36.19M
+NOZZLE_WALL_SCH: dict[str, dict[int, float]] = {
+    "Sch 10S": {
+        15: 1.6,  20: 2.0,  25: 2.0,  32: 2.0,  40: 2.3,  50: 2.8,
+        65: 3.0,  80: 3.0, 100: 3.0, 125: 3.4, 150: 3.4,
+        200: 3.8, 250: 4.0, 300: 4.5, 350: 4.5, 400: 4.5, 450: 4.5,
+        500: 4.5, 600: 5.0, 700: 6.4, 800: 6.4,
+    },
+    "Sch 40": {
+        15: 2.8,  20: 2.8,  25: 3.4,  32: 3.6,  40: 3.7,  50: 3.9,
+        65: 5.2,  80: 5.5, 100: 6.0, 125: 6.6, 150: 7.1,
+        200: 8.2, 250: 9.3, 300: 9.5, 350: 9.5, 400: 9.5, 450: 9.5,
+        500: 9.5, 600: 9.5, 700: 11.1, 800: 12.7,
+    },
+    "Sch 80": {
+        15: 3.7,  20: 3.9,  25: 4.5,  32: 4.9,  40: 5.1,  50: 5.5,
+        65: 7.0,  80: 7.6, 100: 8.6, 125: 9.5, 150: 11.0,
+        200: 12.7, 250: 15.1, 300: 17.5, 350: 19.1, 400: 21.4, 450: 23.8,
+        500: 25.4, 600: 28.6, 700: 31.8, 800: 34.9,
+    },
+    "Sch 160": {
+        15: 4.8,  20: 5.6,  25: 6.4,  32: 6.4,  40: 7.1,  50: 8.7,
+        65: 9.5,  80: 11.1, 100: 13.5, 125: 15.9, 150: 18.3,
+        200: 23.0, 250: 28.6, 300: 33.3, 350: 35.0, 400: 36.5, 450: 38.0,
+        500: 38.0, 600: 38.0, 700: 38.0, 800: 38.0,
+    },
+    "XXH": {
+        15: 7.5,  20: 7.5,  25: 8.1,  32: 8.1,  40: 8.1,  50: 8.7,
+        65: 11.1, 80: 12.7, 100: 15.2, 125: 17.5, 150: 20.6,
+        200: 26.2, 250: 31.8, 300: 38.1, 350: 38.1, 400: 38.1, 450: 38.1,
+        500: 38.1, 600: 38.1, 700: 38.1, 800: 38.1,
+    },
+}
+
+# Minimum recommended schedule by EN PN rating
+_PN_SCHEDULE: dict[int, str] = {
+    6: "Sch 10S", 10: "Sch 10S", 16: "Sch 40",
+    25: "Sch 40",  40: "Sch 40", 63: "Sch 80",
+    100: "Sch 80", 160: "Sch 160", 250: "Sch 160", 320: "Sch 160", 400: "XXH",
+}
+
+# Minimum recommended schedule by ASME Class rating
+_CLASS_SCHEDULE: dict[int, str] = {
+    150: "Sch 40", 300: "Sch 40", 600: "Sch 80",
+    900: "Sch 160", 1500: "Sch 160", 2500: "XXH",
+}
+
+
+def recommended_schedule(pn_or_class: int | str, code: str) -> str:
+    """Recommended minimum pipe schedule for a given PN (EN) or Class (ASME)."""
+    key = int(pn_or_class)
+    if code == "EN":
+        return _PN_SCHEDULE.get(key, "Sch 40")
+    return _CLASS_SCHEDULE.get(key, "Sch 40")
+
 
 @dataclass
 class NozzlePlacementResult:
@@ -259,13 +314,44 @@ def nozzle_on_head(
 
     elif head_type == HeadType.ELLIPSOIDAL:
         h_head = b
+        # Hoop-stress reversal radius: beyond this the circumferential stress
+        # becomes compressive.  For a 2:1 head (k=2) this is R/√3 ≈ 0.577 R.
+        # Formula: r_rev = R / √(k²−1),  k = ellipse_ratio = a/b.
+        _k = max(ellipse_ratio, 1.001)
+        r_rev = R / math.sqrt(_k * _k - 1.0)
+        z_rev = b * math.sqrt(max(0.0, 1.0 - (r_rev / R) ** 2))
+
+        r_crown_end = r_rev
+        z_crown_end = z_rev
+        d_at_crown_end = R - r_rev   # d_from_top at the compressive-zone boundary
+
         if r > R:
             errors.append(f"r = {r:.0f} mm > R = {R:.0f} mm.")
             zone = "outside_head"
-        else:
+        elif r <= r_rev:
             zone = "crown"
-        r_crown_end = R
-        z_crown_end = 0.0
+        else:
+            zone = "knuckle"
+            warnings.append(
+                f"Nozzle centre is in the compressive-stress zone of the ellipsoidal head "
+                f"(r = {r:.0f} mm > r_reversal = {r_rev:.0f} mm). "
+                "Beyond the hoop-stress reversal radius the circumferential membrane stress "
+                "is compressive; standard area-replacement calculations (EN cl. 9 / ASME UG-37) "
+                "are non-conservative here. Move the nozzle toward the vessel axis "
+                f"(d_from_top between {d_at_crown_end:.0f} mm and "
+                f"{Di - d_at_crown_end:.0f} mm) or use detailed FEA."
+            )
+
+        # Edge clearance to the compressive-zone boundary (same concept as tori knuckle)
+        if zone != "outside_head":
+            edge_to_knuckle = r_rev - (r + nozzle_OR)
+            if zone == "crown" and edge_to_knuckle < 0:
+                warnings.append(
+                    f"Nozzle OD edge extends {-edge_to_knuckle:.0f} mm into the "
+                    f"compressive-stress zone (nozzle edge at r = {r + nozzle_OR:.0f} mm, "
+                    f"reversal boundary at r = {r_rev:.0f} mm). "
+                    "Reduce nozzle size or move toward the vessel axis.")
+                zone = "knuckle"
 
     elif head_type in (HeadType.TORISPHERICAL, HeadType.FLANGED_DISHED):
         tg = _tori_geometry(Di, R_c, r_k)
@@ -363,8 +449,17 @@ def nozzle_on_head(
 
     # Code-zone compliance
     if geom_ok:
-        if head_type in (HeadType.HEMISPHERICAL, HeadType.ELLIPSOIDAL):
+        if head_type == HeadType.HEMISPHERICAL:
             code_ok = zone == "crown"
+        elif head_type == HeadType.ELLIPSOIDAL:
+            # Peripheral (compressive-stress) zone: not explicitly forbidden but
+            # standard rules are non-conservative → amber "?" rather than red "✗"
+            if zone == "outside_head":
+                code_ok = False
+            elif zone == "crown" and (edge_to_knuckle is None or edge_to_knuckle >= 0):
+                code_ok = True
+            else:
+                code_ok = None   # edge or centre in compressive zone — detailed check needed
         elif head_type in (HeadType.TORISPHERICAL, HeadType.FLANGED_DISHED):
             code_ok = (zone == "crown") and (edge_to_knuckle is not None) and (edge_to_knuckle >= 0)
         elif head_type == HeadType.CONICAL:

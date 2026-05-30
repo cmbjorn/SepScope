@@ -12,9 +12,24 @@ from engines import (
     HeadType, head_geometry, head_thickness,
     shell_thickness, nozzle_on_head, reinforcement_check,
 )
-from engines.nozzle_geometry import NOZZLE_OD, NOZZLE_WALL_T, _tori_geometry
+from engines.nozzle_geometry import (
+    NOZZLE_OD, NOZZLE_WALL_T, _tori_geometry,
+    NOZZLE_WALL_SCH, recommended_schedule,
+)
 from engines.head_geometry import _FD_CROWN_RATIO, _FD_KNUCKLE_RATIO
+from engines.vessel_volume import vessel_volumes
 from standards import DN_SIZES, EN_PN_RATINGS, ASME_CLASS_PRESSURE_20C, max_pn_for_temperature
+
+# Level tag visual styles: (line-colour, dash-style, line-width)
+_LEVEL_STYLE: dict[str, tuple[str, str, float]] = {
+    "LZLL": ("#4b5563", "dot",   1.5),
+    "LALL": ("#dc2626", "dash",  1.5),
+    "LAL":  ("#f97316", "dash",  1.5),
+    "NLL":  ("#2563eb", "solid", 2.2),
+    "LAH":  ("#f97316", "dash",  1.5),
+    "LAHH": ("#dc2626", "dash",  1.5),
+    "LZHH": ("#4b5563", "dot",   1.5),
+}
 
 st.set_page_config(
     page_title="VesselCalc",
@@ -116,9 +131,14 @@ def _vessel_figure(
     t_head_nom: float,
     t_shell_nom: float,
     nres,
-    cyl_len_show: float = 400.0,
+    cyl_len_show: float | None = None,
+    levels_mm: dict[str, float] | None = None,
 ) -> go.Figure:
     """Horizontal side-view cross-section: head on left, cylinder on right."""
+    if cyl_len_show is None:
+        # Scale cylinder length so x-range ≈ y-range → equal mm/px on both axes
+        cyl_len_show = Di
+
     R = Di / 2
     # F&D is drawn identically to torispherical with its fixed ratios
     if head_type == HeadType.FLANGED_DISHED:
@@ -194,8 +214,60 @@ def _vessel_figure(
                            showarrow=False, font=dict(size=9, color="#b45309"),
                            bgcolor="rgba(255,255,255,0.55)", borderpad=2)
 
+    elif head_type == HeadType.ELLIPSOIDAL:
+        # Split into crown-equivalent zone (green) and compressive-stress zone (amber)
+        # at the hoop-stress reversal radius r_rev = R / √(k²−1), k = Di/(2b)
+        _k = max(Di / (2.0 * b), 1.001)
+        r_rev = R / math.sqrt(_k * _k - 1.0)
+        z_rev = b * math.sqrt(max(0.0, 1.0 - (r_rev / R) ** 2))
+        N_e = 80
+        t_rev = math.asin(min(1.0, r_rev / R))   # parametric angle at boundary
+
+        def _ellipse_arc(t0, t1, n):
+            pts_z, pts_y = [], []
+            for i in range(n + 1):
+                t = t0 + (t1 - t0) * i / n
+                pts_y.append(R * math.sin(t))
+                pts_z.append(-b * math.cos(t))
+            return pts_z, pts_y
+
+        n1 = max(2, int(N_e * t_rev / (math.pi / 2)))
+        n2 = max(2, N_e - n1)
+        cz, cy = _ellipse_arc(0, t_rev, n1)
+        pz, py = _ellipse_arc(t_rev, math.pi / 2, n2)
+
+        # Crown zone fill (green)
+        fig.add_trace(go.Scatter(
+            x=cz + list(reversed(cz)),
+            y=cy + [-y for y in reversed(cy)],
+            fill="toself", fillcolor="rgba(34,197,94,0.22)",
+            line=dict(color="rgba(0,0,0,0)", width=0),
+            name="Crown equiv. — nozzle permitted", hoverinfo="skip",
+        ))
+        # Peripheral zone fill (amber)
+        fig.add_trace(go.Scatter(
+            x=pz + list(reversed(pz)),
+            y=py + [-y for y in reversed(py)],
+            fill="toself", fillcolor="rgba(245,158,11,0.25)",
+            line=dict(color="rgba(0,0,0,0)", width=0),
+            name="Compressive-stress zone — detailed check needed", hoverinfo="skip",
+        ))
+        # Boundary line
+        fig.add_shape(type="line", x0=-z_rev, x1=-z_rev, y0=-r_rev, y1=r_rev,
+                      line=dict(color="#16a34a", width=1.8, dash="dash"))
+        # Labels
+        fig.add_annotation(x=-(b + z_rev) / 2, y=0, text="Crown",
+                           showarrow=False, font=dict(size=10, color="#15803d"),
+                           bgcolor="rgba(255,255,255,0.55)", borderpad=2)
+        fig.add_annotation(x=-z_rev / 2, y=(r_rev + R) / 2, text="Compressive",
+                           showarrow=False, font=dict(size=9, color="#b45309"),
+                           bgcolor="rgba(255,255,255,0.55)", borderpad=2)
+        fig.add_annotation(x=-z_rev / 2, y=-(r_rev + R) / 2, text="Compressive",
+                           showarrow=False, font=dict(size=9, color="#b45309"),
+                           bgcolor="rgba(255,255,255,0.55)", borderpad=2)
+
     elif head_type != HeadType.FLAT:
-        # Hemispherical, ellipsoidal, conical: entire head surface is valid
+        # Hemispherical, conical: entire head surface is valid
         fig.add_trace(go.Scatter(
             x=zs_upper + list(reversed(zs_upper)),
             y=ys_upper + [-y for y in reversed(ys_upper)],
@@ -333,6 +405,36 @@ def _vessel_figure(
             showarrow=False, font=dict(size=11, color="#475569"),
         )
 
+    # ── Liquid level lines ────────────────────────────────────────────────────
+    if levels_mm:
+        R = Di / 2
+        x_line_l = -(h_head + 40)
+        x_line_r = cyl_len_show * 0.88
+        x_label  = cyl_len_show * 0.90
+        # Sort so labels don't overlap if levels are close
+        sorted_lvls = sorted(levels_mm.items(), key=lambda kv: kv[1])
+        prev_label_y: float | None = None
+        for tag, h in sorted_lvls:
+            h = max(0.0, min(Di, h))
+            y_line = h - R
+            colour, dash, width = _LEVEL_STYLE.get(tag, ("#64748b", "dash", 1.5))
+            fig.add_shape(
+                type="line", x0=x_line_l, x1=x_line_r, y0=y_line, y1=y_line,
+                line=dict(color=colour, width=width, dash=dash),
+            )
+            # Nudge label up if it would collide with the previous one
+            label_y = y_line
+            if prev_label_y is not None and abs(label_y - prev_label_y) < 22:
+                label_y = prev_label_y + 22
+            fig.add_annotation(
+                x=x_label, y=label_y,
+                text=f"<b>{tag}</b>",
+                showarrow=False, xanchor="left",
+                font=dict(size=9, color=colour),
+                bgcolor="rgba(255,255,255,0.75)", borderpad=1,
+            )
+            prev_label_y = label_y
+
     # ── Pole label ────────────────────────────────────────────────────────────
     fig.add_annotation(
         x=-(h_head + 2) if h_head > 0 else -5, y=0,
@@ -345,7 +447,7 @@ def _vessel_figure(
     y_lim = R + max(t_shell_nom, 30) + 60
 
     fig.update_layout(
-        height=500,
+        height=520,
         margin=dict(l=10, r=10, t=10, b=30),
         plot_bgcolor="white",
         paper_bgcolor="white",
@@ -356,10 +458,12 @@ def _vessel_figure(
             title="Axial position (mm) — 0 = tangent line",
             range=[x_min, x_max],
             zeroline=False, gridcolor="#f8fafc", tickformat=",d",
+            constrain="domain",
         ),
         yaxis=dict(
             title="Vertical position (mm) — 0 = vessel axis",
             range=[-y_lim, y_lim],
+            scaleanchor="x", scaleratio=1,
             gridcolor="#f8fafc",
         ),
     )
@@ -397,6 +501,9 @@ def main():
 
         Di = st.number_input("Inner diameter Di (mm)", min_value=100.0, max_value=10000.0,
                              value=1800.0, step=50.0, key="Di")
+        L_shell = st.number_input("Shell length T-T (mm)", min_value=100.0, max_value=50000.0,
+                                  value=6000.0, step=100.0, key="L_shell",
+                                  help="Tangent-to-tangent cylinder length (excludes head depths).")
         P_barg = st.number_input("Design pressure (barg)", min_value=0.1, max_value=500.0,
                                  value=20.0, step=0.5, key="P_barg")
         T_C = st.number_input("Design temperature (°C)", min_value=-200.0, max_value=500.0,
@@ -407,7 +514,7 @@ def main():
         if not mat_options:
             mat_options = {k: v["name"] for k, v in MATERIALS.items()}
         mat_key = st.selectbox("Material", options=list(mat_options.keys()),
-                               format_func=lambda k: MATERIALS[k]["name"][:55],
+                               format_func=lambda k: MATERIALS[k].get("short", MATERIALS[k]["name"][:55]),
                                key="material")
 
         CA_mm = st.number_input("Corrosion allowance CA (mm)", min_value=0.0,
@@ -493,13 +600,48 @@ def main():
             ),
         )
 
+        # Auto-update nozzle wall thickness when PN/Class or DN changes
+        rec_sch = recommended_schedule(pn_sel, code_key)
+        rec_t   = float(NOZZLE_WALL_SCH[rec_sch].get(dn_mm, nozzle_t_default))
+        _pn_prev_key = "_prev_pn_dn"
+        if st.session_state.get(_pn_prev_key) != (pn_sel, code_key, dn_mm):
+            st.session_state["nozzle_t"] = rec_t
+            st.session_state[_pn_prev_key] = (pn_sel, code_key, dn_mm)
+
         nozzle_t_override = st.number_input(
             "Nozzle wall thickness (mm)",
             min_value=1.0, max_value=100.0,
-            value=float(nozzle_t_default),
+            value=rec_t,
             step=0.5, key="nozzle_t",
-            help="Default: Sch 40 / standard wall for this DN.",
+            help="Auto-set from recommended schedule for the selected PN/Class.",
         )
+        st.caption(f"Schedule: **{rec_sch}** (recommended for {code_key} "
+                   f"{'PN' if code_key == 'EN' else 'Class'} {pn_sel})")
+
+        st.divider()
+        st.header("Volume levels")
+
+        include_heads = st.checkbox("Include endcap volumes", value=True, key="incl_heads")
+        st.caption("Set each level as % of inner diameter (0 % = bottom, 100 % = top)")
+
+        _LEVEL_DEFAULTS = {
+            "LZLL": 5, "LALL": 10, "LAL": 20, "NLL": 50,
+            "LAH": 75, "LAHH": 85, "LZHH": 95,
+        }
+        levels_pct: dict[str, float] = {}
+        for tag, default_pct in _LEVEL_DEFAULTS.items():
+            colour = _LEVEL_STYLE[tag][0]
+            c1, c2 = st.columns([1, 2])
+            c1.markdown(
+                f'<span style="color:{colour};font-weight:700">{tag}</span>',
+                unsafe_allow_html=True,
+            )
+            levels_pct[tag] = c2.number_input(
+                "% Di", min_value=0.0, max_value=100.0,
+                value=float(default_pct), step=1.0,
+                key=f"lvl_{tag}", label_visibility="collapsed",
+            )
+        levels_mm_vol = {tag: pct / 100.0 * Di for tag, pct in levels_pct.items()}
 
     # ── Compute ───────────────────────────────────────────────────────────────
     stress   = allowable_stress(mat_key, T_C, code_key)
@@ -552,6 +694,7 @@ def main():
             t_head_nom=head_res.t_nom_mm,
             t_shell_nom=shell_res.t_nom_mm,
             nres=nozzle_res,
+            levels_mm=levels_mm_vol,
         )
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
@@ -576,7 +719,9 @@ def main():
 
     with col_res:
         with st.expander("**Material & allowable stress**", expanded=True):
-            st.markdown(f"**{MATERIALS[mat_key]['name']}**")
+            mat = MATERIALS[mat_key]
+            st.markdown(f"**{mat.get('short', mat['name'])}**")
+            st.caption(mat['name'])
             st.caption(stress["basis"])
             st.metric("Allowable stress fd", f"{fd:.1f} MPa")
 
@@ -702,6 +847,71 @@ def main():
             if rows:
                 import pandas as pd
                 st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+
+    # ── Volume table (full-width, below the two columns) ─────────────────────
+    import pandas as pd
+
+    vol_res = vessel_volumes(
+        head_type, Di, L_shell, levels_mm_vol,
+        crown_ratio=crown_ratio, knuckle_ratio=knuckle_ratio,
+        alpha_deg_cone=alpha_deg_cone, ellipse_ratio=ellipse_ratio,
+        include_heads=include_heads,
+    )
+
+    with st.expander("**Volume calculator**", expanded=True):
+        # Total volume summary
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total vessel", f"{vol_res['total_m3']:.3f} m³",
+                  f"{vol_res['total_L']:.0f} L")
+        c2.metric("Cylinder only", f"{vol_res['shell_m3']:.3f} m³",
+                  f"{vol_res['shell_L']:.0f} L")
+        c3.metric("Both heads", f"{vol_res['heads_m3']:.3f} m³",
+                  f"{vol_res['heads_L']:.0f} L")
+        heads_pct = (vol_res['heads_m3'] / vol_res['total_m3'] * 100
+                     if vol_res['total_m3'] > 0 else 0)
+        c4.metric("Heads share", f"{heads_pct:.1f} %",
+                  "incl. in total" if include_heads else "excluded")
+
+        st.divider()
+
+        # Per-level table
+        rows_vol = []
+        for row in vol_res["levels"]:
+            tag   = row["tag"]
+            colour, dash, _ = _LEVEL_STYLE.get(tag, ("#64748b", "dash", 1.5))
+            label = (
+                f'<span style="color:{colour};font-weight:700">{tag}</span>'
+            )
+            rows_vol.append({
+                "Level":           label,
+                "Height (mm)":     f"{row['h_mm']:.0f}",
+                "% Di":            f"{row['h_pct']:.1f}",
+                "Vol to level (m³)": f"{row['vol_m3']:.3f}",
+                "Vol to level (L)":  f"{row['vol_L']:.0f}",
+                "% vessel":        f"{row['vol_pct']:.1f}",
+                "Between levels (m³)": f"{row['btw_m3']:.3f}",
+                "Between levels (L)":  f"{row['btw_L']:.0f}",
+            })
+
+        table_html = pd.DataFrame(rows_vol).to_html(
+            index=False, escape=False,
+            classes="vol-table",
+            border=0,
+        )
+        st.markdown(
+            "<style>.vol-table{width:100%;border-collapse:collapse;font-size:0.88em}"
+            ".vol-table th{background:#f1f5f9;padding:6px 10px;text-align:left;"
+            "border-bottom:2px solid #e2e8f0}"
+            ".vol-table td{padding:5px 10px;border-bottom:1px solid #f1f5f9}"
+            ".vol-table tr:hover td{background:#f8fafc}</style>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(table_html, unsafe_allow_html=True)
+        st.caption(
+            f"Shell L = {L_shell:.0f} mm T-T  ·  "
+            + ("Endcap volumes included" if include_heads else "Cylinder only — endcaps excluded")
+        )
 
 
 if __name__ == "__main__":

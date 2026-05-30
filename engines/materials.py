@@ -26,7 +26,8 @@ import math
 MATERIALS: dict[str, dict] = {
     # ── Carbon steel ─────────────────────────────────────────────────────────
     "SA-516-70": {
-        "name": "SA-516 Gr.70  (Carbon steel pressure vessel plate)",
+        "name":  "SA-516 Gr.70  (Carbon steel pressure vessel plate)",
+        "short": "Carbon steel — SA-516-70",
         "code": "ASME",
         "spec": "SA-516-70",
         "group": "1.1",
@@ -39,7 +40,8 @@ MATERIALS: dict[str, dict] = {
         ],
     },
     "SA-516-60": {
-        "name": "SA-516 Gr.60  (Carbon steel pressure vessel plate)",
+        "name":  "SA-516 Gr.60  (Carbon steel pressure vessel plate)",
+        "short": "Carbon steel — SA-516-60",
         "code": "ASME",
         "spec": "SA-516-60",
         "group": "1.1",
@@ -50,7 +52,8 @@ MATERIALS: dict[str, dict] = {
         ],
     },
     "P265GH": {
-        "name": "P265GH  (EN 10028-2 carbon steel for pressure purposes)",
+        "name":  "P265GH  (EN 10028-2 carbon steel for pressure purposes)",
+        "short": "Carbon steel — P265GH",
         "code": "EN",
         "spec": "P265GH",
         "group": "1.1",
@@ -61,7 +64,8 @@ MATERIALS: dict[str, dict] = {
                    (300, 195), (350, 185), (400, 175), (425, 165)],
     },
     "P295GH": {
-        "name": "P295GH  (EN 10028-2 carbon steel, higher strength)",
+        "name":  "P295GH  (EN 10028-2 carbon steel, higher strength)",
+        "short": "Carbon steel — P295GH (higher strength)",
         "code": "EN",
         "spec": "P295GH",
         "group": "1.1",
@@ -73,7 +77,8 @@ MATERIALS: dict[str, dict] = {
     },
     # ── Austenitic stainless steel ───────────────────────────────────────────
     "SA-240-316L": {
-        "name": "SA-240 Type 316L  (Austenitic SS plate)",
+        "name":  "SA-240 Type 316L  (Austenitic SS plate)",
+        "short": "Stainless steel 316L — SA-240",
         "code": "ASME",
         "spec": "SA-240-316L",
         "group": "8.1",
@@ -85,7 +90,8 @@ MATERIALS: dict[str, dict] = {
         ],
     },
     "SA-240-304L": {
-        "name": "SA-240 Type 304L  (Austenitic SS plate)",
+        "name":  "SA-240 Type 304L  (Austenitic SS plate)",
+        "short": "Stainless steel 304L — SA-240",
         "code": "ASME",
         "spec": "SA-240-304L",
         "group": "8.1",
@@ -97,7 +103,8 @@ MATERIALS: dict[str, dict] = {
         ],
     },
     "X2CrNiMo17-12-2": {
-        "name": "X2CrNiMo17-12-2 (1.4404 / 316L)  (EN 10028-7 austenitic SS)",
+        "name":  "X2CrNiMo17-12-2 (1.4404 / 316L)  (EN 10028-7 austenitic SS)",
+        "short": "Stainless steel 316L — 1.4404",
         "code": "EN",
         "spec": "X2CrNiMo17-12-2",
         "group": "8.1",
@@ -108,7 +115,8 @@ MATERIALS: dict[str, dict] = {
                    (300, 123), (350, 119), (400, 116), (450, 113), (500, 111)],
     },
     "X2CrNi18-9": {
-        "name": "X2CrNi18-9 (1.4307 / 304L)  (EN 10028-7 austenitic SS)",
+        "name":  "X2CrNi18-9 (1.4307 / 304L)  (EN 10028-7 austenitic SS)",
+        "short": "Stainless steel 304L — 1.4307",
         "code": "EN",
         "spec": "X2CrNi18-9",
         "group": "8.1",
@@ -120,7 +128,8 @@ MATERIALS: dict[str, dict] = {
     },
     # ── Duplex stainless steel ───────────────────────────────────────────────
     "SA-240-2205": {
-        "name": "SA-240 UNS S31803 / S32205  (Duplex 2205 plate)",
+        "name":  "SA-240 UNS S31803 / S32205  (Duplex 2205 plate)",
+        "short": "Duplex stainless 2205 — SA-240",
         "code": "ASME",
         "spec": "SA-240-S31803",
         "group": "10H",
@@ -131,7 +140,8 @@ MATERIALS: dict[str, dict] = {
         ],
     },
     "X2CrNiMoN22-5-3": {
-        "name": "X2CrNiMoN22-5-3 (1.4462 / 2205)  (EN 10028-7 duplex SS)",
+        "name":  "X2CrNiMoN22-5-3 (1.4462 / 2205)  (EN 10028-7 duplex SS)",
+        "short": "Duplex stainless 2205 — 1.4462",
         "code": "EN",
         "spec": "X2CrNiMoN22-5-3",
         "group": "10H",
@@ -140,6 +150,33 @@ MATERIALS: dict[str, dict] = {
                    (200, 555), (250, 540), (300, 520), (315, 510)],
         "Rp02_T": [(20, 450), (50, 435), (100, 415), (150, 400),
                    (200, 390), (250, 380), (300, 370), (315, 365)],
+    },
+    # ── Nickel alloys ────────────────────────────────────────────────────────
+    "SB-443-625": {
+        "name":  "SB-443 UNS N06625  (Inconel 625 plate/sheet, annealed)",
+        "short": "Inconel 625 — SB-443 (N06625)",
+        "code": "ASME",
+        "spec": "SB-443-N06625",
+        "group": "NiCrMo",
+        "Rm": 827, "Rp02": 414, "rho": 8440, "E_GPa": 208,
+        # ASME II-D Table 1B, UNS N06625, annealed plate
+        "allowable": [
+            (-29, 195), (40, 195), (100, 190), (150, 186), (200, 180),
+            (250, 173), (300, 165), (350, 157), (400, 149), (450, 141),
+            (500, 133), (538, 121),
+        ],
+    },
+    "NiCr22Mo9Nb": {
+        "name":  "NiCr22Mo9Nb (2.4856 / Alloy 625)  (EN 10028-7 nickel alloy)",
+        "short": "Inconel 625 — 2.4856 (NiCr22Mo9Nb)",
+        "code": "EN",
+        "spec": "NiCr22Mo9Nb",
+        "group": "NiCrMo",
+        "Rm": 827, "Rp02": 414, "rho": 8440, "E_GPa": 208,
+        "Rm_T":   [(20, 827), (100, 800), (150, 785), (200, 770), (250, 755),
+                   (300, 740), (350, 725), (400, 710), (450, 695), (500, 680)],
+        "Rp02_T": [(20, 414), (100, 390), (150, 375), (200, 360), (250, 346),
+                   (300, 333), (350, 320), (400, 308), (450, 296), (500, 285)],
     },
 }
 

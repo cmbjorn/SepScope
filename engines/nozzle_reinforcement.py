@@ -190,16 +190,25 @@ def reinforcement_check(
             adequate = False
 
         # Check 2: pad outer edge vs knuckle zone (torispherical heads)
-        if (space_to_knuckle_mm is not None
-                and space_to_knuckle_mm >= 0
-                and pad_width > space_to_knuckle_mm):
-            overlap = pad_width - space_to_knuckle_mm
-            warnings.append(
-                f"Pad outer edge extends {overlap:.0f} mm into the knuckle transition "
-                "zone. The area-replacement method (EN cl. 9 / ASME UG-37) is not valid "
-                "in the knuckle — the pad area credit cannot be claimed there. "
-                "FEA or specialist analysis required.")
-            adequate = False
+        if space_to_knuckle_mm is not None:
+            if space_to_knuckle_mm < 0:
+                # Nozzle OD edge already overlaps the knuckle zone —
+                # the area-replacement method is entirely invalid here.
+                warnings.append(
+                    f"Nozzle OD extends {-space_to_knuckle_mm:.0f} mm into the knuckle "
+                    "transition zone. The area-replacement method (EN cl. 9 / ASME UG-37) "
+                    "is not valid in the knuckle and cannot be applied. "
+                    "Use a smaller nozzle, move the nozzle toward the vessel axis, "
+                    "or use FEA / specialist analysis.")
+                adequate = False
+            elif pad_width > space_to_knuckle_mm:
+                overlap = pad_width - space_to_knuckle_mm
+                warnings.append(
+                    f"Pad outer edge extends {overlap:.0f} mm into the knuckle transition "
+                    "zone. The area-replacement method (EN cl. 9 / ASME UG-37) is not valid "
+                    "in the knuckle — the pad area credit cannot be claimed there. "
+                    "FEA or specialist analysis required.")
+                adequate = False
 
     # Warnings
     if t_head_corroded_nom <= t_head_req_mm:
