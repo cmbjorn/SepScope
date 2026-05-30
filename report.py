@@ -223,12 +223,16 @@ def _sketch_svg(
     ry   = (Di / 2) * sc    # head vertical   semi-axis (SVG px)
 
     if h_head > 0:
+        # SVG arc notes (y axis points DOWN):
+        # Going top→bottom at same x, sweep=1 (CW) bows outward to the RIGHT.
+        # Going bottom→top at same x, sweep=1 (CW) bows outward to the LEFT.
+        # Both heads therefore use sweep=1.
         vessel_d = (
             f"M {tl:.2f} {vtop:.2f} "                               # top-left tangent
             f"L {tr:.2f} {vtop:.2f} "                               # top wall →
-            f"A {rx:.2f} {ry:.2f} 0 0 0 {tr:.2f} {vbot:.2f} "     # right head (sweep=0 → bows right)
+            f"A {rx:.2f} {ry:.2f} 0 0 1 {tr:.2f} {vbot:.2f} "     # right head (CW → bows right)
             f"L {tl:.2f} {vbot:.2f} "                               # bottom wall ←
-            f"A {rx:.2f} {ry:.2f} 0 0 1 {tl:.2f} {vtop:.2f} "     # left  head (sweep=1 → bows left)
+            f"A {rx:.2f} {ry:.2f} 0 0 1 {tl:.2f} {vtop:.2f} "     # left  head (CW → bows left)
             f"Z"
         )
     else:
