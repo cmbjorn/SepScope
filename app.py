@@ -1998,7 +1998,6 @@ def main():
             if nz.get("service") == "Inlet"
         ]
         if inlet_nozzles:
-            from engines.nozzle_geometry import NOZZLE_OD, NOZZLE_WALL_T, NOZZLE_WALL_SCH
             _Q_mix_per_m3s = (Q_gas_m3h + Q_liq_m3h) / n_inlets / 3600.0
             _rho_mix = (rho_gas * Q_gas_m3h + rho_liq * Q_liq_m3h) / max(Q_gas_m3h + Q_liq_m3h, 1e-9)
             # Use first inlet nozzle for representative size
