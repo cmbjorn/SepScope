@@ -1137,7 +1137,17 @@ def main():
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
-        vessel_tag = st.text_input("Equipment tag", value="V-1001", key="vessel_tag")
+        project_name = st.text_input("Project name", value="", key="project_name",
+                                     placeholder="e.g. Offshore Platform Alpha")
+        vessel_tag   = st.text_input("Equipment tag", value="V-1001", key="vessel_tag")
+        issued_for   = st.selectbox(
+            "Issued for", ["Inquiry", "HAZOP review", "Approval", "Construction"],
+            key="issued_for",
+        )
+
+        _gen_btn = st.button("📋 Generate Datasheet", type="primary", key="gen_report_btn",
+                             use_container_width=True)
+        st.divider()
 
         st.header("Vessel parameters")
 
@@ -2066,18 +2076,15 @@ def main():
             + ("Endcap volumes included" if include_heads else "Cylinder only — endcaps excluded")
         )
 
-    # ── Report generation ─────────────────────────────────────────────────────
-    st.divider()
-    rb1, rb2, *_ = st.columns([1.1, 1.5, 4])
-    rb1.markdown("**Reports**")
-    if rb2.button("📋 Generate Vessel Datasheet", type="primary"):
+    # ── Report generation (triggered from sidebar button) ─────────────────────
+    if _gen_btn:
         import report as _report
-        # Compute head depth from profile points (same logic as _vessel_figure)
-        _zs_up, _ = _head_surface_points(
-            head_type, Di, R_c, r_k, alpha_deg_cone, b)
-        _h_head = max((abs(z) for z in _zs_up), default=0.0)
+        _zs_up, _ = _head_surface_points(head_type, Di, R_c, r_k, alpha_deg_cone, b)
+        _h_head   = max((abs(z) for z in _zs_up), default=0.0)
         html_bytes = _report.generate_datasheet_html(
+            project_name=project_name,
             vessel_tag=vessel_tag,
+            issued_for=issued_for,
             Di=Di, L_shell=L_shell, h_head=_h_head,
             P_barg=P_barg, T_C=T_C,
             mat_key=mat_key, head_type_label=head_label_map[head_type],
@@ -2096,12 +2103,12 @@ def main():
             has_meshpad=has_meshpad, has_baffles=has_baffles,
             has_inlet_dev=has_inlet_dev, has_vortex_brk=has_vortex_brk,
             L_baffle_mm=L_baffle_mm, baffle_open_pct=baffle_open_pct,
-            K_sb=K_sb, include_heads=include_heads,
+            K_sb=K_sb, n_inlets=n_inlets,
         ).encode("utf-8")
         from datetime import date as _date
         fname = f"datasheet_{vessel_tag.replace(' ','_')}_{_date.today().isoformat()}.html"
-        st.download_button(
-            "📥 Download Datasheet (HTML → print to PDF)",
+        st.sidebar.download_button(
+            "📥 Download (HTML/print to PDF)",
             data=html_bytes,
             file_name=fname,
             mime="text/html",
