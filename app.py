@@ -1957,6 +1957,7 @@ def main():
         include_ldv = _yn("Calculate LDV", "include_ldv")
         vb_offset_mm = 0.0
         ldv_sf = 1.5
+        ldv_target_m3: float | None = None   # None = not set
         if include_ldv:
             vb_offset_mm = st.number_input(
                 "Minimum VB level — vessel bottom + (mm)",
@@ -1974,6 +1975,16 @@ def main():
                      "Accounts for instrument uncertainty, cavitation margin, and measurement deadband. "
                      "Typical: 1.25–2.0.",
             )
+            if _yn("Set specific LDV target", "ldv_set_target", default="No"):
+                _ldv_target_L = st.number_input(
+                    "Required LDV — before safety factor (L)",
+                    min_value=0.0, max_value=100000.0, value=500.0, step=10.0,
+                    key="ldv_target_L",
+                    help="Volume of downstream equipment that must be filled "
+                         "(before any safety factor). The safety factor is applied "
+                         "separately to give the conservative requirement.",
+                )
+                ldv_target_m3 = _ldv_target_L / 1000.0
 
     # ── Sync nozzle widget values into session_state["nozzles"] ────────────────
     # The nozzle editor renders BELOW the chart, so we must pull the latest
@@ -2556,9 +2567,17 @@ def main():
         _seg_a_raw = max(0.0, _vmap.get("LDV_LZLL", 0.0) - _vmap.get("LDV_VB",   0.0))
         _seg_a     = _seg_a_raw * ldv_sf
         _seg_b     = max(0.0, _vmap.get("LDV_LAL",  0.0) - _vmap.get("LDV_LALL", 0.0))
-        _ldv_total = _seg_a + _seg_b
+        _ldv_total = _seg_a + _seg_b                        # Seg A (×SF) + Seg B
+        _ldv_raw   = _seg_a_raw + _seg_b                    # same, before SF
         _ldv_nll_inv = max(0.0, _vmap.get("LDV_NLL", 0.0) - _vmap.get("LDV_VB",  0.0))
         _ldv_ok    = _ldv_nll_inv >= _ldv_total
+
+        # Target comparison (when a specific LDV volume is provided)
+        _tgt_ok: bool | None = None
+        _tgt_sf_ok: bool | None = None
+        if ldv_target_m3 is not None and ldv_target_m3 > 0:
+            _tgt_ok    = _ldv_raw    >= ldv_target_m3           # levels provide enough raw volume
+            _tgt_sf_ok = _ldv_nll_inv >= ldv_target_m3 * ldv_sf  # NLL inventory covers target × SF
 
         _ldv_result = {
             "eff_vb_mm":    _eff_vb,
@@ -2569,10 +2588,14 @@ def main():
             "seg_a_raw_m3": _seg_a_raw,
             "seg_a_m3":     _seg_a,
             "seg_b_m3":     _seg_b,
+            "ldv_raw_m3":   _ldv_raw,
             "ldv_total_m3": _ldv_total,
             "nll_inv_m3":   _ldv_nll_inv,
             "sf":           ldv_sf,
             "ok":           _ldv_ok,
+            "target_m3":    ldv_target_m3,   # None if not set
+            "target_ok":    _tgt_ok,         # levels raw volume ≥ target
+            "target_sf_ok": _tgt_sf_ok,      # NLL inventory ≥ target × SF
         }
 
     # Count inlet nozzles for n_inlets parameter
@@ -2858,19 +2881,67 @@ def main():
             ]
             st.dataframe(pd.DataFrame(_ldv_rows), hide_index=True, use_container_width=True)
 
-            # Inventory check
+            # ── Specific target comparison (when set) ────────────────────────
+            if ldv.get("target_m3") is not None:
+                tgt_L    = ldv["target_m3"] * 1000
+                tgt_sf_L = ldv["target_m3"] * ldv["sf"] * 1000
+                raw_L    = ldv["ldv_raw_m3"] * 1000
+                inv_L    = ldv["nll_inv_m3"] * 1000
+                st.markdown("**Target LDV comparison**")
+                _tc1, _tc2 = st.columns(2)
+                _delta1 = raw_L - tgt_L
+                _tc1.metric(
+                    "Level volumes (before SF) vs target",
+                    f"{raw_L:.1f} L",
+                    delta=f"{'surplus' if _delta1 >= 0 else 'shortfall'} {_delta1:+.1f} L vs target {tgt_L:.1f} L",
+                    delta_color="normal" if ldv["target_ok"] else "inverse",
+                    help="Volume defined by level setpoints (Seg A raw + Seg B) compared "
+                         "to the required LDV before safety factor. "
+                         "Shows whether the level setpoints alone cover the downstream volume.",
+                )
+                _delta2 = inv_L - tgt_sf_L
+                _tc2.metric(
+                    f"NLL inventory vs target × SF {ldv['sf']:.2f}",
+                    f"{inv_L:.1f} L",
+                    delta=f"{'surplus' if _delta2 >= 0 else 'shortfall'} {_delta2:+.1f} L vs {tgt_sf_L:.1f} L",
+                    delta_color="normal" if ldv["target_sf_ok"] else "inverse",
+                    help=f"Available liquid at NLL (from VB to NLL) compared to "
+                         f"target × SF = {tgt_L:.1f} × {ldv['sf']:.2f} = {tgt_sf_L:.1f} L. "
+                         "This is the conservative requirement the vessel must meet.",
+                )
+                if ldv["target_ok"] and ldv["target_sf_ok"]:
+                    st.success(
+                        f"Target LDV **{tgt_L:.1f} L** covered — "
+                        f"level volumes: {raw_L:.1f} L (raw), NLL inventory: {inv_L:.1f} L ≥ {tgt_sf_L:.1f} L (×SF).",
+                        icon="✅",
+                    )
+                else:
+                    _msgs = []
+                    if not ldv["target_ok"]:
+                        _msgs.append(
+                            f"level volumes {raw_L:.1f} L < target {tgt_L:.1f} L — "
+                            "adjust LZLL/LALL/LAL setpoints to widen the LDV zone"
+                        )
+                    if not ldv["target_sf_ok"]:
+                        _msgs.append(
+                            f"NLL inventory {inv_L:.1f} L < {tgt_sf_L:.1f} L (target × SF) — "
+                            "increase vessel size or raise NLL"
+                        )
+                    st.error("Target LDV not met: " + "; ".join(_msgs) + ".", icon="🚫")
+
+            # ── Inventory check (level-based LDV vs NLL) ──────────────────────
             _inv_surplus = ldv["nll_inv_m3"] - ldv["ldv_total_m3"]
             if ldv["ok"]:
                 st.success(
-                    f"LDV check passed — NLL inventory "
-                    f"**{ldv['nll_inv_m3']*1000:.1f} L** ≥ LDV **{ldv['ldv_total_m3']*1000:.1f} L** "
+                    f"NLL inventory check passed — "
+                    f"**{ldv['nll_inv_m3']*1000:.1f} L** ≥ LDV (×SF) **{ldv['ldv_total_m3']*1000:.1f} L** "
                     f"(surplus: **{_inv_surplus*1000:.1f} L**).",
                     icon="✅",
                 )
             else:
                 st.error(
-                    f"LDV check failed — NLL inventory "
-                    f"**{ldv['nll_inv_m3']*1000:.1f} L** < LDV **{ldv['ldv_total_m3']*1000:.1f} L** "
+                    f"NLL inventory check failed — "
+                    f"**{ldv['nll_inv_m3']*1000:.1f} L** < LDV (×SF) **{ldv['ldv_total_m3']*1000:.1f} L** "
                     f"(shortfall: **{-_inv_surplus*1000:.1f} L**). "
                     "Increase vessel size, raise NLL, lower LZLL, or reduce downstream equipment empty volume.",
                     icon="🚫",

@@ -741,6 +741,24 @@ def generate_datasheet_html(
                  f"≤ NLL inventory {ldv['nll_inv_m3']*1000:.1f}  L  (VB → NLL, incl. heads)",
                  ldv["ok"]),
         ]
+        if ldv.get("target_m3") is not None:
+            tgt_L    = ldv["target_m3"] * 1000
+            raw_L    = ldv.get("ldv_raw_m3", ldv["seg_a_raw_m3"] + ldv["seg_b_m3"]) * 1000
+            tgt_sf_L = tgt_L * ldv["sf"]
+            sizing_rows += [
+                _row("LDV Target  (before SF)  — downstream equipment volume",
+                     f"{tgt_L:.1f}  L  (input)",
+                     "User-specified required LDV",
+                     None),
+                _row("Level volumes (Seg A raw + Seg B)  vs target",
+                     f"{raw_L:.1f}  L",
+                     f"≥ {tgt_L:.1f}  L  (target before SF)",
+                     ldv.get("target_ok")),
+                _row(f"NLL inventory  vs  target × SF {ldv['sf']:.2f}",
+                     f"{ldv['nll_inv_m3']*1000:.1f}  L",
+                     f"≥ {tgt_sf_L:.1f}  L  (target × SF)",
+                     ldv.get("target_sf_ok")),
+            ]
     if inlet_nzs:
         _nz0 = inlet_nzs[0][0]
         _, _A0 = _bore(_nz0)
