@@ -753,11 +753,14 @@ def _vessel_figure(
     saddle_depth = (saddle_h + saddle_base_h + 40) if saddle_a_mm > 0 else 0
     x_min = -(h_head + 80)
     x_max = L_shell + h_head + 80
-    # y_lim scales naturally with the vessel — no hard cap so scaleanchor="x"
-    # always produces an undistorted 1 mm = 1 mm drawing in both axes.
-    _base_top = R + max(t_shell_nom, 20) + 70
-    y_lim     = max(_base_top, _y_nz_top + 20)
-    y_lim_bot = R + max(t_shell_nom, 20) + max(70, saddle_depth)
+    # Y-axis: show just enough to include vessel wall + nozzle stubs + labels.
+    # scaleanchor is intentionally NOT used — the figure is a schematic, not a
+    # true-scale drawing, and forcing 1:1 scale makes the vessel diameter tiny
+    # for long vessels.
+    _top_clearance = max(t_shell_nom, 15) + 40     # wall thickness + label room
+    _bot_clearance = max(t_shell_nom, 15) + max(40, saddle_depth)
+    y_lim     = max(R + _top_clearance, _y_nz_top + 25)
+    y_lim_bot = R + _bot_clearance
 
     # Build simple two-frame animation to 'flash' problem nozzles (pulse traces)
     pulse_indices: list[int] = []
@@ -784,11 +787,10 @@ def _vessel_figure(
                                                                 {"frame": {"duration": 700, "redraw": False},
                                                                  "fromcurrent": True, "transition": {"duration": 0}}])])])
 
-    # Chart height derived from vessel aspect ratio so the drawing fills the frame.
-    # Target ~900 px effective plot-area width; add margin allowance.
-    _x_span = x_max - x_min
-    _y_span = y_lim + y_lim_bot
-    _chart_h = max(350, min(820, int(900 * _y_span / _x_span) + 80))
+    # Chart height: fixed proportional to vessel diameter so the cross-section is
+    # clearly legible regardless of vessel length. Min 360 px, max 600 px.
+    _y_span  = y_lim + y_lim_bot
+    _chart_h = max(360, min(600, int(_y_span / Di * 480) + 60))
 
     fig.update_layout(
         height=_chart_h,
@@ -812,7 +814,6 @@ def _vessel_figure(
         yaxis=dict(
             title="Vertical position (mm) — 0 = vessel axis",
             range=[-y_lim_bot, y_lim],
-            scaleanchor="x", scaleratio=1,
             gridcolor="#f8fafc",
         ),
     )
@@ -1615,15 +1616,28 @@ def main():
             key="issued_for",
         )
 
-        _gen_btn = st.button("📋 Generate Datasheet", type="primary", key="gen_report_btn",
-                             use_container_width=True)
+        _rb1, _rb2 = st.columns(2)
+        _gen_btn      = _rb1.button("Datasheet", type="secondary",
+                                     key="gen_report_btn", use_container_width=True)
+        _gen_word_btn = _rb2.button("Report", type="secondary",
+                                     key="gen_word_btn", use_container_width=True)
+
         if "report_html" in st.session_state:
             st.download_button(
-                "📥 Download (HTML / print to PDF)",
+                "📥 Download HTML (print to PDF)",
                 data=st.session_state["report_html"],
                 file_name=st.session_state.get("report_fname", "datasheet.html"),
                 mime="text/html",
                 key="dl_report",
+                use_container_width=True,
+            )
+        if "report_docx" in st.session_state:
+            st.download_button(
+                "📥 Download Word (.docx)",
+                data=st.session_state["report_docx"],
+                file_name=st.session_state.get("report_docx_fname", "design_report.docx"),
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="dl_word",
                 use_container_width=True,
             )
         st.divider()
@@ -3033,6 +3047,46 @@ def main():
         ).encode("utf-8")
         st.session_state["report_fname"] = (
             f"datasheet_{vessel_tag.replace(' ','_')}_{_date.today().isoformat()}.html"
+        )
+        st.rerun()
+
+    if _gen_word_btn:
+        import word_report as _word_report
+        from datetime import date as _date
+        _zs_up, _ = _head_surface_points(head_type, Di, R_c, r_k, alpha_deg_cone, b)
+        _h_head   = max((abs(z) for z in _zs_up), default=0.0)
+        st.session_state["report_docx"] = _word_report.generate_word_report(
+            project_name=project_name,
+            vessel_tag=vessel_tag,
+            issued_for=issued_for,
+            Di=Di, L_shell=L_shell, h_head=_h_head,
+            P_barg=P_barg, T_C=T_C,
+            mat_key=mat_key, head_type_label=head_label_map[head_type],
+            code_key=code_key, fd_MPa=fd,
+            shell_res=shell_res, head_res=head_res,
+            nozzle_results=nozzle_results,
+            levels_mm=levels_mm_vol,
+            sep_res=sep_res,
+            gas_props=gas_props, liq_props=liq_props,
+            Q_gas_m3h=Q_gas_m3h, Q_liq_m3h=Q_liq_m3h,
+            gas_fluid=gas_fluid, liq_fluid=liq_fluid,
+            placement_checks=placement_checks,
+            head_warnings=head_res.warnings,
+            shell_warnings=shell_res.warnings,
+            saddle_a_mm=saddle_a_mm, saddle_w_mm=saddle_w_mm,
+            has_meshpad=has_meshpad, has_baffles=has_baffles,
+            has_inlet_dev=has_inlet_dev, has_vortex_brk=has_vortex_brk,
+            L_baffle_mm=L_baffle_mm, baffle_open_pct=baffle_open_pct,
+            K_sb=K_sb, n_inlets=n_inlets,
+            P_op_barg=P_op_barg, T_op_C=T_op_C,
+            t_holdup_req_min=t_holdup_req,
+            t_surge_req_min=t_surge_req,
+            include_surge_check=include_surge_check,
+            ldv_result=_ldv_result,
+            Z_gas=Z_gas,
+        )
+        st.session_state["report_docx_fname"] = (
+            f"design_report_{vessel_tag.replace(' ','_')}_{_date.today().isoformat()}.docx"
         )
         st.rerun()
 
