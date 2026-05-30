@@ -322,21 +322,21 @@ def _sketch_svg(
                  anchor="start", size=7, color=nc, bold=True)
 
         elif loc == "Shell — top":
-            nx = nz["axial_mm"]
+            nx = nz.get("axial_mm", L_shell / 2)
             line(nx, Di, nx, Di + stub, c=nc, w=1.5)
             circle(nx, Di + stub, disp_r, fill="#dbeafe", stroke=nc, sw=1.5)
             text(nx, Di + stub + disp_r + 10, nz["tag"],
                  anchor="middle", size=7, color=nc, bold=True)
 
         elif loc == "Shell — bottom":
-            nx = nz["axial_mm"]
+            nx = nz.get("axial_mm", L_shell / 2)
             line(nx, 0, nx, -stub, c=nc, w=1.5)
             circle(nx, -stub, disp_r, fill="#dbeafe", stroke=nc, sw=1.5)
             text(nx, -stub - disp_r - 4, nz["tag"],
                  anchor="middle", size=7, color=nc, bold=True)
 
         else:  # Shell side — small circle on centreline
-            nx = nz["axial_mm"]
+            nx = nz.get("axial_mm", L_shell / 2)
             cr = min(OD/2 * 0.6, 15.0)
             circle(nx, Di/2, cr, fill="#dbeafe", stroke=nc, sw=1.2)
             text(nx, Di/2 + cr + 9, nz["tag"],
@@ -477,60 +477,164 @@ def generate_datasheet_html(
     ))
 
     # ── B  PROCESS FLUIDS ─────────────────────────────────────────────────────
+    rho_g  = gas_props.rho_kgm3
+    rho_l  = liq_props.rho_kgm3
+    mu_g   = gas_props.mu_Pas * 1e6   # μPa·s
+    mu_l   = liq_props.mu_Pas * 1e3   # mPa·s
+    rho_mix = (rho_g * Q_gas_m3h + rho_l * Q_liq_m3h) / max(Q_gas_m3h + Q_liq_m3h, 1e-9)
+
+    # Compact fluid property panels
     gas_kv = _kv(
-        ("Fluid",                   gas_fluid),
-        ("Molecular weight",        f"{gas_props.MW:.2f}  g/mol"),
-        ("Density (op. cond.)",     f"{gas_props.rho_kgm3:.3f}  kg/m³"),
-        ("Viscosity",               f"{gas_props.mu_Pas*1e6:.1f}  μPa·s"),
-        ("Compressibility Z",       f"{getattr(gas_props, 'Z', 1.0):.3f}" if hasattr(gas_props, "Z") else "—"),
-        ("Flow rate",               f"{Q_gas_m3h:,.1f}  m³/h  (actual)"),
-        ("Mass flow rate",          f"{Q_gas_m3h * gas_props.rho_kgm3:,.0f}  kg/h"),
+        ("Fluid",                  gas_fluid),
+        ("Mol. weight",            f"{gas_props.MW:.2f}  g/mol"),
+        ("Density at op. cond.",   f"{rho_g:.3f}  kg/m³"),
+        ("Dynamic viscosity",      f"{mu_g:.1f}  μPa·s"),
     )
     liq_kv = _kv(
-        ("Fluid",                   liq_fluid),
-        ("Density (op. cond.)",     f"{liq_props.rho_kgm3:.0f}  kg/m³"),
-        ("Viscosity",               f"{liq_props.mu_Pas*1e3:.3f}  mPa·s"),
-        ("Flow rate",               f"{Q_liq_m3h:,.2f}  m³/h"),
-        ("Mass flow rate",          f"{Q_liq_m3h * liq_props.rho_kgm3:,.0f}  kg/h"),
+        ("Fluid",                  liq_fluid),
+        ("Density at op. cond.",   f"{rho_l:.0f}  kg/m³"),
+        ("Dynamic viscosity",      f"{mu_l:.3f}  mPa·s"),
     )
-    # Inlet summary
-    rho_mix = (gas_props.rho_kgm3 * Q_gas_m3h + liq_props.rho_kgm3 * Q_liq_m3h) \
-              / max(Q_gas_m3h + Q_liq_m3h, 1e-9)
-    inlet_nz = [nz for nz, *_ in nozzle_results if nz.get("service") == "Inlet"]
-    if inlet_nz:
-        nz0   = inlet_nz[0]
-        OD0   = NOZZLE_OD.get(nz0["dn"], nz0["dn"] * 1.05)
-        rec0  = recommended_schedule(nz0.get("pn", 25), code_key)
-        t0    = float(NOZZLE_WALL_SCH[rec0].get(nz0["dn"], NOZZLE_WALL_T.get(nz0["dn"], 8.0)))
-        ID0   = max(OD0 - 2 * t0, 1.0)
-        A_nz  = _m.pi * (ID0 * 1e-3) ** 2 / 4.0
-        Q_mix_per = (Q_gas_m3h + Q_liq_m3h) / n_inlets / 3600.0
-        v_in  = Q_mix_per / max(A_nz, 1e-9)
-        rv2   = rho_mix * v_in ** 2
+
+    # ── Per-nozzle stream table ────────────────────────────────────────────
+    def _bore(nz_dict):
+        dn  = nz_dict["dn"]
+        OD  = NOZZLE_OD.get(dn, dn * 1.05)
+        rec = recommended_schedule(nz_dict.get("pn", 25), code_key)
+        t   = float(NOZZLE_WALL_SCH[rec].get(dn, NOZZLE_WALL_T.get(dn, 8.0)))
+        ID  = max(OD - 2 * t, 1.0)
+        return ID, _m.pi * (ID * 1e-3) ** 2 / 4.0
+
+    def _td(val, rs=1, bold=False, bg=""):
+        rs_attr = f' rowspan="{rs}"' if rs > 1 else ""
+        st_attr = []
+        if bold:   st_attr.append("font-weight:bold")
+        if bg:     st_attr.append(f"background:{bg}")
+        st_str = f' style="{";".join(st_attr)}"' if st_attr else ""
+        v = str(val)
+        v = v if v.startswith("<") else _e(v)
+        return f"<td{rs_attr}{st_str}>{v}</td>"
+
+    _COLS = ["Tag", "DN", "Service", "Component", "Fluid",
+             "Vol. flow  (m³/h)", "Mass flow  (kg/h)",
+             "Density  (kg/m³)", "Viscosity",
+             "Nozzle vel.  (m/s)", "ρv²  (Pa)"]
+    th_row = "".join(f"<th>{_e(c)}</th>" for c in _COLS)
+
+    inlet_nzs   = [(nz,*r) for nz,*r in nozzle_results if nz.get("service") == "Inlet"]
+    gas_out_nzs = [(nz,*r) for nz,*r in nozzle_results if nz.get("service") == "Gas outlet"]
+    liq_out_nzs = [(nz,*r) for nz,*r in nozzle_results if nz.get("service") == "Liquid outlet"]
+
+    tbody = ""
+
+    # ── Inlet nozzles: 3 rows each (gas / liquid / mixture) ───────────────
+    for (nz, *_) in inlet_nzs:
+        dn = nz["dn"]
+        ID, A = _bore(nz)
+        Qg = Q_gas_m3h / n_inlets
+        Ql = Q_liq_m3h / n_inlets
+        Qm = Qg + Ql
+        v_m  = (Qm / 3600.0) / max(A, 1e-9)
+        rv2  = rho_mix * v_m ** 2
         rv2_ok = rv2 <= 2400.0
-        inlet_summary_kv = _kv(
-            ("Number of inlet nozzles",     str(n_inlets)),
-            ("Gas flow per inlet",           f"{Q_gas_m3h/n_inlets:,.1f}  m³/h  +  "
-                                             f"{Q_liq_m3h/n_inlets:,.2f}  m³/h liquid"),
-            ("Mixture density",             f"{rho_mix:.1f}  kg/m³"),
-            ("Inlet velocity (per nozzle)", f"{v_in:.2f}  m/s  (DN{nz0['dn']}, bore {ID0:.0f} mm)"),
-            ("Inlet momentum  ρv²",         f"{rv2:,.0f}  Pa  (limit 2 400 Pa — API RP 14E)  "
-                                            + ("✓" if rv2_ok else "✗")),
-        )
-    else:
-        inlet_summary_kv = _kv(("Inlet nozzles", "None configured"))
+        rv2_s = (f'<span style="color:{"#166534" if rv2_ok else "#dc2626"};font-weight:bold">'
+                 f'{rv2:,.0f} {"✓" if rv2_ok else "✗"}</span>')
+
+        # Row 1 — gas component
+        tbody += ("<tr>"
+            + _td(f"<b>{nz['tag']}</b>", rs=3)
+            + _td(f"DN{dn}",             rs=3)
+            + _td(nz["service"],         rs=3)
+            + _td("Gas phase")
+            + _td(gas_fluid)
+            + _td(f"{Qg:,.1f}")
+            + _td(f"{Qg*rho_g:,.0f}")
+            + _td(f"{rho_g:.3f}")
+            + _td(f"{mu_g:.1f} μPa·s")
+            + _td("—") + _td("—")
+            + "</tr>")
+        # Row 2 — liquid component
+        tbody += ("<tr>"
+            + _td("Liquid phase")
+            + _td(liq_fluid)
+            + _td(f"{Ql:,.2f}")
+            + _td(f"{Ql*rho_l:,.0f}")
+            + _td(f"{rho_l:.0f}")
+            + _td(f"{mu_l:.3f} mPa·s")
+            + _td("—") + _td("—")
+            + "</tr>")
+        # Row 3 — mixture total (highlighted)
+        tbody += (f'<tr style="background:#eef2ff">'
+            + _td("<b>Mixture</b>")
+            + _td("—")
+            + _td(f"<b>{Qm:,.1f}</b>")
+            + _td(f"<b>{Qg*rho_g+Ql*rho_l:,.0f}</b>")
+            + _td(f"{rho_mix:.1f}")
+            + _td("—")
+            + _td(f"<b>{v_m:.2f}</b>")
+            + _td(rv2_s)
+            + "</tr>")
+
+    # ── Gas outlet ────────────────────────────────────────────────────────
+    for (nz, *_) in gas_out_nzs:
+        ID, A = _bore(nz)
+        v_go = (Q_gas_m3h / 3600.0) / max(A, 1e-9)
+        tbody += ("<tr>"
+            + _td(f"<b>{nz['tag']}</b>")
+            + _td(f"DN{nz['dn']}")
+            + _td(nz["service"])
+            + _td("Gas  (separated)")
+            + _td(gas_fluid)
+            + _td(f"{Q_gas_m3h:,.1f}")
+            + _td(f"{Q_gas_m3h*rho_g:,.0f}")
+            + _td(f"{rho_g:.3f}")
+            + _td(f"{mu_g:.1f} μPa·s")
+            + _td(f"{v_go:.2f}")
+            + _td("—")
+            + "</tr>")
+
+    # ── Liquid outlet ─────────────────────────────────────────────────────
+    for (nz, *_) in liq_out_nzs:
+        ID, A = _bore(nz)
+        v_lo = (Q_liq_m3h / 3600.0) / max(A, 1e-9)
+        tbody += ("<tr>"
+            + _td(f"<b>{nz['tag']}</b>")
+            + _td(f"DN{nz['dn']}")
+            + _td(nz["service"])
+            + _td("Liquid  (separated)")
+            + _td(liq_fluid)
+            + _td(f"{Q_liq_m3h:,.2f}")
+            + _td(f"{Q_liq_m3h*rho_l:,.0f}")
+            + _td(f"{rho_l:.0f}")
+            + _td(f"{mu_l:.3f} mPa·s")
+            + _td(f"{v_lo:.2f}")
+            + _td("—")
+            + "</tr>")
+
+    if not tbody:
+        tbody = f'<tr><td colspan="{len(_COLS)}" style="color:#888">No inlet / outlet nozzles configured.</td></tr>'
+
+    stream_table = (
+        f'<table class="dt" style="font-size:9pt">'
+        f'<thead><tr>{th_row}</tr></thead>'
+        f'<tbody>{tbody}</tbody>'
+        f'</table>'
+        f'<div style="font-size:8pt;color:#555;padding:2px 6px;margin-top:2px">'
+        f'All flows at actual operating conditions.  '
+        f'Inlet flow split equally between {n_inlets} nozzle{"s" if n_inlets>1 else ""}.  '
+        f'ρv² limit: 2 400 Pa (API RP 14E, non-erosive service).  '
+        f'Bore ID based on nominal schedule for the selected rating.'
+        f'</div>'
+    )
 
     panels_b = (
-        f'<div class="two-panel">'
-        f'{_panel("Gas Phase", gas_kv)}'
-        f'{_panel("Liquid Phase", liq_kv)}'
+        f'<div class="two-panel" style="margin-bottom:6px">'
+        f'{_panel("Gas Phase Properties", gas_kv)}'
+        f'{_panel("Liquid Phase Properties", liq_kv)}'
         f'</div>'
-        f'<div style="margin-bottom:4px">'
-        f'<div class="panel-title">Inlet Conditions (two-phase, split equally between {n_inlets} nozzle{"s" if n_inlets>1 else ""})</div>'
-        f'{inlet_summary_kv}'
-        f'</div>'
+        + stream_table
     )
-    sec_b = _sec("B", "Process Fluids", panels_b)
+    sec_b = _sec("B", "Process Fluids & Nozzle Streams", panels_b)
 
     # ── C  MECHANICAL DESIGN ──────────────────────────────────────────────────
     from engines import MATERIALS
@@ -605,13 +709,17 @@ def generate_datasheet_html(
              "40 – 60 %",
              0.35 <= sep_res.nll_frac <= 0.65),
     ]
-    if inlet_nz:
-        rv2_val = rho_mix * v_in ** 2
+    if inlet_nzs:
+        _nz0 = inlet_nzs[0][0]
+        _, _A0 = _bore(_nz0)
+        _Qm0  = (Q_gas_m3h + Q_liq_m3h) / n_inlets / 3600.0
+        _vm0  = _Qm0 / max(_A0, 1e-9)
+        _rv2  = rho_mix * _vm0 ** 2
         sizing_rows.append(_row(
-            f"Inlet nozzle momentum  ρv²  (DN{nz0['dn']})  [API RP 14E]",
-            f"{rv2_val:,.0f}  Pa",
+            f"Inlet nozzle momentum  ρv²  (DN{_nz0['dn']})  [API RP 14E]",
+            f"{_rv2:,.0f}  Pa",
             "≤ 2 400  Pa",
-            rv2_val <= 2400.0,
+            _rv2 <= 2400.0,
         ))
     sizing_rows += [
         _row("Liquid droplet cut size — gas phase  (drag-corrected Stokes)",
