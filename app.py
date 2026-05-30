@@ -56,41 +56,38 @@ def _loc_y(loc: str, R: float) -> float:
 
 def _default_nozzles(Di: float, L_shell: float) -> list[dict]:
     """
-    Typical horizontal two-phase separator nozzle list.
-    Inlets high on endcaps (20% from top). Process outlets at shell centre.
-    Instruments spaced to avoid OD overlaps.
+    Default nozzle schedule for a horizontal two-phase separator.
+    Tuned for Di = 1800 mm / L = 4000 mm; positions scale proportionally.
+
+    Inlet nozzles: ~14.5 % from top (high inlet, above any internals).
+    Manway on shell side for unobstructed access on a horizontal vessel.
+    Pressure and level instruments on shell top.
     """
     pn = 25
     L  = L_shell
     D  = Di
-    c  = L / 2
     return [
-        # ── Process inlets — high on endcaps (20 % from top) ─────────────────
-        {"tag": "N1",  "service": "Inlet",                "loc": "Left head",      "dn": 250, "pn": pn, "d_from_top": D * 0.20, "axial_mm": c},
-        {"tag": "N2",  "service": "Inlet",                "loc": "Right head",     "dn": 250, "pn": pn, "d_from_top": D * 0.20, "axial_mm": c},
-        # ── Process outlets — centre of shell ─────────────────────────────────
-        {"tag": "GO",  "service": "Gas outlet",           "loc": "Shell — top",    "dn": 100, "pn": pn, "d_from_top": D / 2,    "axial_mm": c},
-        {"tag": "LO",  "service": "Liquid outlet",        "loc": "Shell — bottom", "dn": 200, "pn": pn, "d_from_top": D / 2,    "axial_mm": c},
-        # ── Access / safety ───────────────────────────────────────────────────
-        {"tag": "MH",  "service": "Manway",               "loc": "Shell — top",    "dn": 600, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.20},
-        {"tag": "PSV", "service": "PSV",                  "loc": "Shell — top",    "dn": 100, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.82},
-        # ── Drain & vent ──────────────────────────────────────────────────────
-        {"tag": "D1",  "service": "Drain",                "loc": "Shell — bottom", "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.08},
-        {"tag": "V1",  "service": "Vent",                 "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.04},
-        {"tag": "PG",  "service": "Purge",                "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.93},
-        # ── Pressure instruments — sides, spread left & right ─────────────────
-        {"tag": "PT1", "service": "Pressure transmitter", "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.13},
-        {"tag": "PSH", "service": "Pressure trip",        "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.30},
-        {"tag": "PI1", "service": "Pressure indicator",   "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.80},
-        # ── Level instruments — centred on vessel, both sides ─────────────────
-        {"tag": "LT1", "service": "Level transmitter",    "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.42},
-        {"tag": "LGA", "service": "Level gauge",          "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.47},
-        {"tag": "LGB", "service": "Level gauge",          "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.53},
-        {"tag": "LSH", "service": "Level trip",           "loc": "Shell — side",   "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.58},
-        # ── Temperature — bottom, in liquid ───────────────────────────────────
-        {"tag": "TT1", "service": "Temperature transmitter", "loc": "Shell — bottom", "dn": 50, "pn": pn, "d_from_top": D / 2,  "axial_mm": L * 0.38},
-        # ── Spare ─────────────────────────────────────────────────────────────
-        {"tag": "SP1", "service": "Spare",                "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2,    "axial_mm": L * 0.97},
+        # ── Process inlets — high on endcaps ──────────────────────────────────
+        {"tag": "N1",  "service": "Inlet",                   "loc": "Left head",      "dn": 250, "pn": pn, "d_from_top": D * 0.145, "axial_mm": L * 0.50},
+        {"tag": "N2",  "service": "Inlet",                   "loc": "Right head",     "dn": 250, "pn": pn, "d_from_top": D * 0.145, "axial_mm": L * 0.50},
+        # ── Process outlets ────────────────────────────────────────────────────
+        {"tag": "GO",  "service": "Gas outlet",              "loc": "Shell — top",    "dn": 125, "pn": pn, "d_from_top": D / 2, "axial_mm": L * 0.50},
+        {"tag": "LO",  "service": "Liquid outlet",           "loc": "Shell — bottom", "dn": 250, "pn": pn, "d_from_top": D / 2, "axial_mm": L * 0.50},
+        # ── Manway — shell side for horizontal vessel access ──────────────────
+        {"tag": "MH",  "service": "Manway",                  "loc": "Shell — side",   "dn": 600, "pn": pn, "d_from_top": D / 2, "axial_mm": L * 0.30},
+        # ── Safety valve ──────────────────────────────────────────────────────
+        {"tag": "PSV", "service": "PSV",                     "loc": "Shell — top",    "dn": 100, "pn": pn, "d_from_top": D / 2, "axial_mm": L * 0.75},
+        # ── Drain & vent ───────────────────────────────────────────────────────
+        {"tag": "D1",  "service": "Drain",                   "loc": "Shell — bottom", "dn":  50, "pn": pn, "d_from_top": D / 2, "axial_mm": L * 0.12},
+        {"tag": "V1",  "service": "Vent",                    "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2, "axial_mm": L * 0.25},
+        {"tag": "PG",  "service": "Purge",                   "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2, "axial_mm": L * 0.925},
+        # ── Pressure instruments — shell top ───────────────────────────────────
+        {"tag": "PT1", "service": "Pressure transmitter",    "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2, "axial_mm": L * 0.195},
+        {"tag": "PSH", "service": "Pressure trip",           "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2, "axial_mm": L * 0.45},
+        {"tag": "PI1", "service": "Pressure indicator",      "loc": "Shell — top",    "dn":  50, "pn": pn, "d_from_top": D / 2, "axial_mm": L * 0.95},
+        # ── Level instruments — shell top ──────────────────────────────────────
+        {"tag": "LT1", "service": "Level transmitter",       "loc": "Shell — top",    "dn":  80, "pn": pn, "d_from_top": D / 2, "axial_mm": L * 0.63},
+        {"tag": "LT2", "service": "Level trip",              "loc": "Shell — top",    "dn":  80, "pn": pn, "d_from_top": D / 2, "axial_mm": L * 0.375},
     ]
 
 st.set_page_config(
