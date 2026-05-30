@@ -753,11 +753,11 @@ def _vessel_figure(
     saddle_depth = (saddle_h + saddle_base_h + 40) if saddle_a_mm > 0 else 0
     x_min = -(h_head + 80)
     x_max = L_shell + h_head + 80
-    # y_lim: just enough clearance for nozzle stubs/labels; hard cap at 1 000 mm
-    # (equivalent to Di = 2 000 mm) so the canvas never feels too empty.
+    # y_lim scales naturally with the vessel — no hard cap so scaleanchor="x"
+    # always produces an undistorted 1 mm = 1 mm drawing in both axes.
     _base_top = R + max(t_shell_nom, 20) + 70
-    y_lim     = min(max(_base_top, _y_nz_top + 20), 1000)
-    y_lim_bot = min(R + max(t_shell_nom, 20) + max(70, saddle_depth), 1000)
+    y_lim     = max(_base_top, _y_nz_top + 20)
+    y_lim_bot = R + max(t_shell_nom, 20) + max(70, saddle_depth)
 
     # Build simple two-frame animation to 'flash' problem nozzles (pulse traces)
     pulse_indices: list[int] = []
@@ -784,8 +784,14 @@ def _vessel_figure(
                                                                 {"frame": {"duration": 700, "redraw": False},
                                                                  "fromcurrent": True, "transition": {"duration": 0}}])])])
 
+    # Chart height derived from vessel aspect ratio so the drawing fills the frame.
+    # Target ~900 px effective plot-area width; add margin allowance.
+    _x_span = x_max - x_min
+    _y_span = y_lim + y_lim_bot
+    _chart_h = max(350, min(820, int(900 * _y_span / _x_span) + 80))
+
     fig.update_layout(
-        height=650,
+        height=_chart_h,
         margin=dict(l=10, r=10, t=10, b=10),
         plot_bgcolor="white",
         paper_bgcolor="white",
@@ -2090,7 +2096,6 @@ def main():
             issued_for=issued_for,
             Di=Di, L_shell=L_shell, h_head=_h_head,
             P_barg=P_barg, T_C=T_C,
-            P_op_barg=P_op_barg, T_op_C=T_op_C,
             mat_key=mat_key, head_type_label=head_label_map[head_type],
             code_key=code_key, fd_MPa=fd,
             shell_res=shell_res, head_res=head_res,
@@ -2108,6 +2113,7 @@ def main():
             has_inlet_dev=has_inlet_dev, has_vortex_brk=has_vortex_brk,
             L_baffle_mm=L_baffle_mm, baffle_open_pct=baffle_open_pct,
             K_sb=K_sb, n_inlets=n_inlets,
+            P_op_barg=P_op_barg, T_op_C=T_op_C,
         ).encode("utf-8")
         from datetime import date as _date
         fname = f"datasheet_{vessel_tag.replace(' ','_')}_{_date.today().isoformat()}.html"

@@ -205,48 +205,55 @@ def _sketch_svg(
                    f'text-anchor="{anchor}" font-size="{size}" '
                    f'font-weight="{fw}" fill="{color}">{_esc.escape(str(s))}</text>')
 
-    # ── Liquid fill at NLL ─────────────────────────────────────────────────
+    # ── Vessel outline — single closed path, equal scale guaranteed ───────
+    # Coordinate convention: px/py both use the same factor sc (mm→SVG px),
+    # so 1 mm = sc px in both axes; no distortion possible.
+    #
+    # Path goes: top-left-tangent → top-wall → right-head-arc → bottom-wall
+    #            → left-head-arc → close (Z)
+    #
+    # SVG arc orientation (y-axis points DOWN):
+    #   Left  head: from (tl, top) to (tl, bottom) — large-arc=0, sweep=1 → bows LEFT
+    #   Right head: from (tr, top) to (tr, bottom) — large-arc=0, sweep=0 → bows RIGHT
+    tl  = px(0)             # left  tangent x (SVG)
+    tr  = px(L_shell)       # right tangent x (SVG)
+    vtop = py(Di)           # vessel top    y (SVG, small value)
+    vbot = py(0)            # vessel bottom y (SVG, large value)
+    rx   = h_head * sc      # head horizontal semi-axis (SVG px)
+    ry   = (Di / 2) * sc    # head vertical   semi-axis (SVG px)
+
+    if h_head > 0:
+        vessel_d = (
+            f"M {tl:.2f} {vtop:.2f} "                               # top-left tangent
+            f"L {tr:.2f} {vtop:.2f} "                               # top wall →
+            f"A {rx:.2f} {ry:.2f} 0 0 0 {tr:.2f} {vbot:.2f} "     # right head (sweep=0 → bows right)
+            f"L {tl:.2f} {vbot:.2f} "                               # bottom wall ←
+            f"A {rx:.2f} {ry:.2f} 0 0 1 {tl:.2f} {vtop:.2f} "     # left  head (sweep=1 → bows left)
+            f"Z"
+        )
+    else:
+        vessel_d = (
+            f"M {tl:.2f} {vtop:.2f} L {tr:.2f} {vtop:.2f} "
+            f"L {tr:.2f} {vbot:.2f} L {tl:.2f} {vbot:.2f} Z"
+        )
+
+    # White fill behind everything, then liquid, then outline on top
+    out.append(f'<path d="{vessel_d}" fill="#f8faff" stroke="none"/>')
+
+    # ── Liquid fill clipped to vessel outline ─────────────────────────────
     liq_h = max(0.0, min(Di, nll_mm))
     if liq_h > 0:
-        rect(0, 0, L_shell, liq_h, fill="rgba(147,197,253,0.30)", stroke="none", sw=0)
+        clip_id = "vc"
+        out.append(f'<defs><clipPath id="{clip_id}"><path d="{vessel_d}"/></clipPath></defs>')
+        liq_y = py(liq_h)  # top of liquid in SVG coords
+        out.append(
+            f'<rect x="{px(-h_head):.1f}" y="{liq_y:.1f}" '
+            f'width="{(L_shell + 2*h_head)*sc:.1f}" height="{(vbot-liq_y):.1f}" '
+            f'fill="rgba(147,197,253,0.35)" clip-path="url(#{clip_id})"/>'
+        )
 
-    # ── Vessel shell (filled white background first) ───────────────────────
-    rect(0, 0, L_shell, Di, fill="#ffffff", stroke="#1e3a5f", sw=2)
-
-    # ── Heads (simplified as rounded rectangles via arcs) ─────────────────
-    if h_head > 0:
-        for xoff, mirror in [(-h_head, False), (L_shell, True)]:
-            # Draw head as an ellipse half
-            rx = h_head * sc
-            ry = (Di / 2) * sc
-            cx = px(xoff + (0 if not mirror else h_head))
-            cy = py(Di / 2)
-            sweep = "0" if not mirror else "1"
-            # Upper arc
-            x1 = px(xoff if not mirror else xoff + h_head)
-            x2 = px(xoff + h_head if not mirror else xoff)
-            y_top = py(Di);  y_bot = py(0)
-            if not mirror:
-                out.append(
-                    f'<path d="M {x1:.1f} {y_top:.1f} '
-                    f'A {rx:.1f} {ry:.1f} 0 0 0 {x1:.1f} {y_bot:.1f}" '
-                    f'fill="#ffffff" stroke="#1e3a5f" stroke-width="2"/>'
-                )
-                out.append(
-                    f'<path d="M {x1:.1f} {y_top:.1f} '
-                    f'A {rx:.1f} {ry:.1f} 0 0 0 {x1:.1f} {y_bot:.1f}" '
-                    f'fill="none" stroke="#1e3a5f" stroke-width="2"/>'
-                )
-            else:
-                out.append(
-                    f'<path d="M {px(xoff):.1f} {y_top:.1f} '
-                    f'A {rx:.1f} {ry:.1f} 0 0 1 {px(xoff):.1f} {y_bot:.1f}" '
-                    f'fill="none" stroke="#1e3a5f" stroke-width="2"/>'
-                )
-    else:
-        # Flat heads: just draw the end lines
-        for xv in (0.0, L_shell):
-            line(xv, 0, xv, Di, w=2.5)
+    # ── Vessel outline on top ─────────────────────────────────────────────
+    out.append(f'<path d="{vessel_d}" fill="none" stroke="#1e3a5f" stroke-width="2"/>')
 
     # ── Centreline ─────────────────────────────────────────────────────────
     line(-h_head - 20, Di/2, L_shell + h_head + 20, Di/2,
@@ -361,8 +368,6 @@ def generate_datasheet_html(
     h_head: float,
     P_barg: float,
     T_C: float,
-    P_op_barg: float | None = None,
-    T_op_C: float | None = None,
     mat_key: str,
     head_type_label: str,
     code_key: str,
@@ -391,6 +396,8 @@ def generate_datasheet_html(
     baffle_open_pct: float,
     K_sb: float,
     n_inlets: int = 1,
+    P_op_barg: float | None = None,
+    T_op_C: float | None = None,
 ) -> str:
     from engines.nozzle_geometry import NOZZLE_OD, NOZZLE_WALL_T, NOZZLE_WALL_SCH, recommended_schedule
     import math as _m
