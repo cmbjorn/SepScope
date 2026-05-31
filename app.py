@@ -1751,7 +1751,7 @@ def main():
                                      placeholder="e.g. Offshore Platform Alpha")
         vessel_tag   = st.text_input("Equipment tag", value="V-1001", key="vessel_tag")
         issued_for   = st.selectbox(
-            "Issued for", ["Inquiry"],
+            "Issued for", ["Inquiry", "HAZOP review"],
             key="issued_for",
         )
 
