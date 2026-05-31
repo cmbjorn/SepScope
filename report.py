@@ -514,7 +514,7 @@ def _endcap_analysis_html(
             )
 
         # Inlet positioning (inlet nozzles only)
-        if nz.get("service") == "Inlet" and lzhh_mm >= 0:
+        if nz.get("service") == "Inlet" and lzhh_mm > 0:
             _nz_IR_h   = (nres.nozzle_OD_mm - 2.0 * nres.nozzle_t_mm) / 2.0
             _nz_bot_h  = (Di - nres.d_from_top_mm) - _nz_IR_h
             _top_clr_h = nres.edge_to_shell_mm          # OD top → vessel crown ID

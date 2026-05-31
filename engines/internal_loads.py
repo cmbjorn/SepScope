@@ -68,9 +68,10 @@ def internal_loads(
     n  = max(n_inlets, 1)
     tf = max(t_flood_s, 1.0)
 
-    # ── LDV surge flow rate per inlet ────────────────────────────────────────
+    # ── LDV surge flow rates ─────────────────────────────────────────────────
     V_ldv_m3            = seg_a_m3 + seg_b_m3
-    Q_ldv_per_inlet_m3s = V_ldv_m3 / tf / n
+    Q_ldv_per_inlet_m3s = V_ldv_m3 / tf / n   # per-inlet (for nozzle velocity)
+    Q_ldv_total_m3s     = V_ldv_m3 / tf        # total through the single baffle
 
     # ── Nozzle bore ──────────────────────────────────────────────────────────
     nz_od_mm, nz_id_mm, A_nozzle_m2 = _nozzle_bore(nozzle_dn, nozzle_pn, code_key)
@@ -86,7 +87,9 @@ def internal_loads(
     R_m         = Di_mm * 1e-3 / 2.0
 
     # ── Baffle: LDV surge ΔP — liquid through perforations ──────────────────
-    v_hole_ldv_ms = Q_ldv_per_inlet_m3s / max(A_baffle_m2 * phi, 1e-9)
+    # All n_inlets discharge simultaneously through the one baffle, so use
+    # the combined total flow rate, not the per-inlet share.
+    v_hole_ldv_ms = Q_ldv_total_m3s / max(A_baffle_m2 * phi, 1e-9)
     dP_surge_Pa   = (1.0 / _CD ** 2) * (rho_liq / 2.0) * v_hole_ldv_ms ** 2
     F_baffle_surge_N = dP_surge_Pa * A_baffle_m2
 

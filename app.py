@@ -2883,6 +2883,9 @@ def main():
         _inp_nz    = _inlet_nzs[0] if _inlet_nzs else None
         _nz_dn     = _inp_nz["dn"] if _inp_nz else 100
         _nz_pn     = _inp_nz.get("pn", 25) if _inp_nz else 25
+        # Rp02 is present for every entry in MATERIALS; fd * 1.5 is the
+        # correct inverse of the EN 1.5 safety factor and is a safe fallback
+        # for any unknown material key.
         _fy        = MATERIALS.get(mat_key, {}).get("Rp02", fd * 1.5)
         _int_loads = internal_loads(
             Di_mm=Di, rho_liq=rho_liq, rho_gas=rho_gas,
