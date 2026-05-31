@@ -839,109 +839,59 @@ def _sketch_svg(
         ff  = _mid(nc)
 
         OD     = NOZZLE_OD.get(dn, dn * 1.05)
-        BV     = OD / 2 * 0.70   # visual bore radius (70 % of pipe radius)
+        BV     = OD / 2 * 0.68   # visual bore radius (68 % of pipe radius)
 
-        stub     = max(OD * 2.2, 55.0)
-        flange_r = OD * 0.70
-        flange_t = max(OD * 0.14, 10.0)
+        stub     = max(OD * 1.4, 45.0)
+        flange_r = OD * 0.62
+        flange_t = max(OD * 0.08, 7.0)
         pipe_h   = stub - flange_t
-        boss_ext = OD * 0.10
-        boss_t   = max(OD * 0.09, 7.0)
 
         if loc == "Left head" and nres is not None:
             ny   = Di - nres.d_from_top_mm
-            nz_x = -nres.z_on_head_mm   # actual surface point on the left head
-            # Boss collar
-            rect(nz_x - boss_t, ny - OD/2 - boss_ext,
-                 boss_t, OD + 2*boss_ext, fill=ff, stroke=nc, sw=1.2)
-            # Pipe body (colored fill)
-            rect(nz_x - pipe_h, ny - OD/2,
-                 pipe_h - boss_t, OD, fill=fl, stroke=nc, sw=1.5)
-            # Bore through pipe (white, centered at ny)
-            rect(nz_x - pipe_h, ny - BV,
-                 pipe_h - boss_t, BV*2, fill="white", stroke=nc, sw=0.8)
-            # Flange plate
-            rect(nz_x - stub, ny - flange_r,
-                 flange_t, flange_r*2, fill=ff, stroke=nc, sw=1.5)
-            # Bore through flange
-            rect(nz_x - stub, ny - BV,
-                 flange_t, BV*2, fill="white", stroke=nc, sw=0.8)
+            nz_x = -nres.z_on_head_mm
+            rect(nz_x - pipe_h, ny - OD/2, pipe_h, OD, fill=fl, stroke=nc, sw=1.2)
+            rect(nz_x - pipe_h, ny - BV, pipe_h, BV*2, fill="white", stroke="none", sw=0)
+            rect(nz_x - stub, ny - flange_r, flange_t, flange_r*2, fill=ff, stroke=nc, sw=1.5)
             text(nz_x - stub - 3, ny + 2, nz["tag"],
                  anchor="end", size=7, color=nc, bold=True)
 
         elif loc == "Right head" and nres is not None:
             ny   = Di - nres.d_from_top_mm
-            nz_x = L_shell + nres.z_on_head_mm   # actual surface point on the right head
-            # Boss collar
-            rect(nz_x, ny - OD/2 - boss_ext,
-                 boss_t, OD + 2*boss_ext, fill=ff, stroke=nc, sw=1.2)
-            # Pipe body (colored fill)
-            rect(nz_x + boss_t, ny - OD/2,
-                 pipe_h - boss_t, OD, fill=fl, stroke=nc, sw=1.5)
-            # Bore through pipe (white, centered at ny)
-            rect(nz_x + boss_t, ny - BV,
-                 pipe_h - boss_t, BV*2, fill="white", stroke=nc, sw=0.8)
-            # Flange plate
-            rect(nz_x + pipe_h, ny - flange_r,
-                 flange_t, flange_r*2, fill=ff, stroke=nc, sw=1.5)
-            # Bore through flange
-            rect(nz_x + pipe_h, ny - BV,
-                 flange_t, BV*2, fill="white", stroke=nc, sw=0.8)
+            nz_x = L_shell + nres.z_on_head_mm
+            rect(nz_x, ny - OD/2, pipe_h, OD, fill=fl, stroke=nc, sw=1.2)
+            rect(nz_x, ny - BV, pipe_h, BV*2, fill="white", stroke="none", sw=0)
+            rect(nz_x + pipe_h, ny - flange_r, flange_t, flange_r*2, fill=ff, stroke=nc, sw=1.5)
             text(nz_x + stub + 3, ny + 2, nz["tag"],
                  anchor="start", size=7, color=nc, bold=True)
 
         elif loc == "Shell — top":
             nx = nz.get("axial_mm", L_shell / 2)
-            # Boss collar
-            rect(nx - OD/2 - boss_ext, Di,
-                 OD + 2*boss_ext, boss_t, fill=ff, stroke=nc, sw=1.2)
-            # Pipe body (colored fill)
-            rect(nx - OD/2, Di + boss_t,
-                 OD, pipe_h - boss_t, fill=fl, stroke=nc, sw=1.5)
-            # Bore through pipe (white)
-            rect(nx - BV, Di + boss_t,
-                 BV*2, pipe_h - boss_t, fill="white", stroke=nc, sw=0.8)
-            # Flange plate
-            rect(nx - flange_r, Di + pipe_h,
-                 flange_r*2, flange_t, fill=ff, stroke=nc, sw=1.5)
-            # Bore through flange
-            rect(nx - BV, Di + pipe_h,
-                 BV*2, flange_t, fill="white", stroke=nc, sw=0.8)
+            rect(nx - OD/2, Di, OD, pipe_h, fill=fl, stroke=nc, sw=1.2)
+            rect(nx - BV, Di, BV*2, pipe_h, fill="white", stroke="none", sw=0)
+            rect(nx - flange_r, Di + pipe_h, flange_r*2, flange_t, fill=ff, stroke=nc, sw=1.5)
             text(nx, Di + stub + 10, nz["tag"],
                  anchor="middle", size=7, color=nc, bold=True)
 
         elif loc == "Shell — bottom":
             nx = nz.get("axial_mm", L_shell / 2)
-            # Boss collar
-            rect(nx - OD/2 - boss_ext, -boss_t,
-                 OD + 2*boss_ext, boss_t, fill=ff, stroke=nc, sw=1.2)
-            # Pipe body (colored fill)
-            rect(nx - OD/2, -(pipe_h),
-                 OD, pipe_h - boss_t, fill=fl, stroke=nc, sw=1.5)
-            # Bore through pipe (white)
-            rect(nx - BV, -(pipe_h),
-                 BV*2, pipe_h - boss_t, fill="white", stroke=nc, sw=0.8)
-            # Flange plate
-            rect(nx - flange_r, -(pipe_h + flange_t),
-                 flange_r*2, flange_t, fill=ff, stroke=nc, sw=1.5)
-            # Bore through flange
-            rect(nx - BV, -(pipe_h + flange_t),
-                 BV*2, flange_t, fill="white", stroke=nc, sw=0.8)
+            rect(nx - OD/2, -pipe_h, OD, pipe_h, fill=fl, stroke=nc, sw=1.2)
+            rect(nx - BV, -pipe_h, BV*2, pipe_h, fill="white", stroke="none", sw=0)
+            rect(nx - flange_r, -(pipe_h + flange_t), flange_r*2, flange_t, fill=ff, stroke=nc, sw=1.5)
             text(nx, -(stub + 10), nz["tag"],
                  anchor="middle", size=7, color=nc, bold=True)
 
         else:  # Shell — side: end-on view → flange ring + pipe ring
             nx       = nz.get("axial_mm", L_shell / 2)
             ny_s     = Di / 2
-            fl_r_ss  = OD * 0.70       # flange outer radius (1.4 × pipe radius)
-            bore_vis = OD / 2 * 0.70   # visual bore radius (70 % of pipe radius)
-            # Flange outer ring: no fill, just an outline circle
+            fl_r_ss  = OD * 0.62
+            bore_vis = OD / 2 * 0.68
+            # Flange outer ring
             out.append(f'<circle cx="{px(nx):.1f}" cy="{py(ny_s):.1f}" '
-                       f'r="{fl_r_ss*sc:.1f}" fill="none" stroke="{nc}" stroke-width="1.8"/>')
-            # Pipe OD disk: light fill, shows pipe wall ring between flange and pipe
-            circle(nx, ny_s, OD/2,    fill=fl,      stroke=nc,  sw=1.5)
-            # Bore disk: white, shows pipe wall between bore and pipe OD
-            circle(nx, ny_s, bore_vis, fill="white",  stroke=nc,  sw=0.8)
+                       f'r="{fl_r_ss*sc:.1f}" fill="none" stroke="{nc}" stroke-width="1.5"/>')
+            # Pipe OD disk
+            circle(nx, ny_s, OD/2,    fill=fl,      stroke=nc,  sw=1.2)
+            # Bore disk (hollow centre)
+            circle(nx, ny_s, bore_vis, fill="white",  stroke="none",  sw=0)
             text(nx, ny_s + fl_r_ss + 10, nz["tag"],
                  anchor="middle", size=6.5, color=nc, bold=True)
 
