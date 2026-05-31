@@ -97,6 +97,18 @@ st.set_page_config(
     page_icon="🛢️",
     layout="wide",
     initial_sidebar_state="expanded",
+    menu_items={
+        "About": (
+            "## SepScope\n\n"
+            "Screening-level scoping tool for horizontal two-phase separators. "
+            "For use during inquiry and FEED phases only.\n\n"
+            "**Disclaimer:** This tool is not a certified design tool and must not be used "
+            "as the basis for detailed engineering, procurement, fabrication, or construction. "
+            "All outputs must be independently reviewed by a qualified engineer.\n\n"
+            "© 2025 Christian Bjørn — "
+            "[MIT License](https://github.com/cmbjorn/SepScope/blob/main/LICENSE)"
+        ),
+    },
 )
 
 # ──────────────────────── HEAD PROFILE GEOMETRY ───────────────────────────────
