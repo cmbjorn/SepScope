@@ -83,23 +83,29 @@ def _head_surface_area_mm2(
         S_total = 2.0 * _m.pi * a ** 2 * (1.0 + (1.0 - e ** 2) / e * _m.atanh(e))
         return S_total / 2.0
 
-    elif head_type_str in ("Torispherical (dished)", "Flanged & Dished (ASME F&D)"):
-        # Approximate: torispherical surface ≈ 1.09 × flat disc area
-        # More accurate: decompose into spherical cap (crown) + toroidal knuckle ring
+    elif head_type_str in (
+        "Torispherical (dished)",           # legacy label (report.py)
+        "Torispherical (Klöpper / dished)", # current app.py label
+        "Flanged & Dished (ASME F&D)",      # legacy label (report.py)
+        "Flanged & Dished — ASME F&D",      # current app.py label
+    ):
         R_c = crown_ratio * Di_mm
         r_k = knuckle_ratio * Di_mm
-        # Crown spherical cap: from centre to where knuckle begins
-        x_kc = R - r_k          # horizontal distance to knuckle start
-        # Half-angle subtended by the crown zone
-        sin_phi = x_kc / R_c
-        phi = _m.asin(min(sin_phi, 1.0))
-        S_crown = 2.0 * _m.pi * R_c ** 2 * (1.0 - _m.cos(phi))
-        # Toroidal knuckle ring
-        # Centroid of the knuckle ring from axis ≈ x_kc + r_k (mean)
-        x_centroid = x_kc + r_k * (1.0 - _m.pi / 4.0)  # approx centroid
-        # Pappus: area = 2π × centroid_dist × arc_length of quarter circle
-        arc = _m.pi / 2.0 * r_k
-        S_knuckle = 2.0 * _m.pi * x_centroid * arc
+        x_kc = R - r_k                       # radial position of knuckle centre
+        dist = max(R_c - r_k, 1e-9)          # crown-centre to knuckle-centre distance
+        # Crown spherical cap: correct half-angle uses (R_c − r_k) as denominator
+        sin_phi = min(x_kc / dist, 1.0)
+        cos_phi = _m.sqrt(max(0.0, 1.0 - sin_phi ** 2))
+        S_crown = 2.0 * _m.pi * R_c ** 2 * (1.0 - cos_phi)
+        # Knuckle arc angle — not always 90°; depends on actual crown/knuckle radii
+        inner     = max(0.0, dist ** 2 - x_kc ** 2)
+        z_cj      = _m.sqrt(inner) * r_k / dist          # axial depth of junction
+        r_cj_off  = x_kc * r_k / dist                    # r_cj − x_kc (radial offset)
+        theta_max = _m.atan2(z_cj, r_cj_off)             # actual knuckle arc angle
+        arc       = r_k * theta_max
+        centroid_r = (x_kc + r_k * _m.sin(theta_max) / theta_max
+                      if theta_max > 1e-9 else x_kc + r_k)
+        S_knuckle = 2.0 * _m.pi * centroid_r * arc
         return S_crown + S_knuckle
 
     elif head_type_str in ("Conical",):
@@ -184,8 +190,8 @@ def vessel_weights(
     m_nozzles = 0.0
     nozzle_detail: list[dict] = []
     for nz in nozzle_list:
-        dn  = nz.get("dn", 100)
-        pn  = nz.get("pn", 25)
+        dn  = int(nz.get("dn", 100))
+        pn  = int(nz.get("pn", 25))
         tag = nz.get("tag", "?")
         svc = nz.get("service", "")
         OD  = NOZZLE_OD.get(dn, dn * 1.05)
