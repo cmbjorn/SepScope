@@ -31,3 +31,11 @@ streamlit run app.py
 ## Deployment
 
 Deploy on [Streamlit Community Cloud](https://streamlit.io/cloud) by pointing it at `app.py` on the `main` branch.
+
+## Disclaimer
+
+SepScope is a **screening and scoping tool** intended for use during inquiry and FEED phases only. Results have not been verified against any certified design methodology and must not be used as the basis for detailed engineering, procurement, fabrication, or construction. All outputs must be independently reviewed and validated by a qualified engineer before any engineering decisions are made. The authors accept no liability for any loss or damage arising from use of this software.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
