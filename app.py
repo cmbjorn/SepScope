@@ -1803,7 +1803,7 @@ def main():
                              value=1800.0, step=50.0, key="Di")
         L_shell = st.number_input("Shell length T-T (mm) — cylinder only",
                                   min_value=100.0, max_value=50000.0,
-                                  value=6000.0, step=100.0, key="L_shell",
+                                  value=4000.0, step=100.0, key="L_shell",
                                   help="Tangent-to-tangent cylinder length (excludes head depths). "
                                        "Pole-to-pole = shell + 2 × head depth.")
         P_barg = st.number_input("Design pressure (barg)", min_value=0.1, max_value=500.0,
@@ -2365,9 +2365,13 @@ def main():
                 help="mm from top inner wall  (0 = top, Di/2 = axis, Di = bottom)",
             )
         else:
+            _nz_od  = NOZZLE_OD.get(nz["dn"], nz["dn"] * 1.05)
+            _nz_hw  = (_nz_od / 2) * (1.40 if nz["loc"] == "Shell — side" else 1.10)
+            _ax_min = max(100.0, _nz_hw + 50.0)
+            _ax_max = max(_ax_min + 50.0, L_shell - _nz_hw - 50.0)
             nz["axial_mm"] = c6.number_input(
-                "axial_mm", min_value=0.0, max_value=float(L_shell),
-                value=float(min(nz.get("axial_mm", L_shell / 2), L_shell)),
+                "axial_mm", min_value=_ax_min, max_value=_ax_max,
+                value=float(max(_ax_min, min(nz.get("axial_mm", L_shell / 2), _ax_max))),
                 step=50.0, key=f"nz_{i}_pos", label_visibility="collapsed",
                 help="mm from left tangent line",
             )
