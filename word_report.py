@@ -417,6 +417,8 @@ def generate_word_report(
     t_surge_req_min: float = 3.0,
     include_surge_check: bool = True,
     ldv_result: dict | None = None,
+    int_loads_result: dict | None = None,
+    weight_result: dict | None = None,
     Z_gas: float = 1.0,
     lining_spec: dict | None = None,
     head_type=None,           # accepted but unused — reserved for future endcap section
@@ -727,6 +729,82 @@ def generate_word_report(
                               f"{ldv['seg_b_m3']*1000:.1f} L  ({ldv['seg_b_m3']:.4f} m³)"))
             ldv_pairs.append(("Note", "Specify an LDV target to see pass/fail checks."))
         _kv_table(doc, ldv_pairs)
+
+    # D.2 — Internals mechanical loads
+    if int_loads_result is not None:
+        il = int_loads_result
+        _sub_heading(doc, "D.2  Internals — Mechanical Loads (LDV Startup Surge)")
+        _caption(doc,
+                 f"Governing load case: LDV inventory ({il['V_ldv_m3']*1000:.1f} L) "
+                 f"floods into vessel in {il['t_flood_s']:.0f} s, split across "
+                 f"{il['n_inlets']} inlet(s). "
+                 "Pure liquid density assumed (startup slug). "
+                 "No standard prescribes this method — verify per project structural code "
+                 "(EN 1993-1-8 / AWS D1.1). Safety factors: SF = 3.0 inlet device (impulsive), "
+                 "SF = 2.0 baffle (quasi-static).")
+        _kv_table(doc, [
+            ("LDV surge flow per inlet",
+             f"{il['Q_ldv_per_inlet_m3s']*1000:.2f} L/s  "
+             f"({il['V_ldv_m3']*1000:.1f} L in {il['t_flood_s']:.0f} s)"),
+            ("", ""),
+            (f"Inlet device — nozzle DN{il['nozzle_dn']} (ID {il['nz_id_mm']:.0f} mm)",
+             f"A = {il['A_nozzle_m2']*1e4:.1f} cm²"),
+            ("Inlet surge velocity",   f"{il['v_ldv_ms']:.2f} m/s"),
+            ("Impact force (unfactored)", f"{il['F_impact_N']:,.0f} N"),
+            (f"Design force  (SF {il['SF_inlet']:.0f})", f"{il['F_inlet_design_N']:,.0f} N"),
+            ("Basis", "F = ρ_liq × v² × A_nozzle  (first principles)"),
+            ("", ""),
+            (f"Baffle plate  (φ = {il['phi']*100:.0f} %, Cd = 0.61)", ""),
+            ("Surge ΔP",               f"{il['dP_surge_Pa']:,.0f} Pa"),
+            ("Governing force (unfactored)", f"{il['F_baffle_surge_N']:,.0f} N"),
+            (f"Design force  (SF {il['SF_baffle']:.0f})", f"{il['F_baffle_design_N']:,.0f} N"),
+            ("Gas ΔP operating (ref.)", f"{il['dP_gas_op_Pa']:.1f} Pa"),
+            ("", ""),
+            ("Min. plate thickness (clamped plate + API 12J ≥ 6 mm)",
+             f"{il['t_baffle_design_mm']:.1f} mm  (calc. {il['t_baffle_min_mm']:.1f} mm)"),
+            (f"Fillet weld throat  (τ_allow = {il['tau_allow_Pa']/1e6:.0f} MPa = 0.4·f_y)",
+             f"{il['a_weld_design_mm']:.1f} mm  (calc. {il['a_weld_req_mm']:.1f} mm, min 3 mm)"),
+            ("Weld perimeter", f"{il['L_weld_m']*1000:.0f} mm  (full circumference)"),
+            ("Material f_d / f_y", f"{il['fd_MPa']:.0f} MPa / {il['fy_MPa']:.0f} MPa"),
+        ])
+
+    # D.3 — Weight estimate
+    if weight_result is not None:
+        wt = weight_result
+        _sub_heading(doc, "D.3  Weight Estimate")
+        _caption(doc,
+                 "Estimated weights ±15–20 %. Shell and heads use nominal wall thickness. "
+                 "Nozzle weight = pipe stub (300 mm projection) + one weld-neck flange per nozzle. "
+                 "Saddle weight from plate-area estimate. Misc +5 % covers welds, paint, support clips.")
+        _total = max(wt["m_dry_kg"], 1.0)
+        def _wpct(m):
+            return f"{m / _total * 100:.1f} %"
+        _kv_table(doc, [
+            ("Dry weight",
+             f"{wt['m_dry_kg']:,.0f} kg  ({wt['m_dry_kg']/1000:.2f} t)"),
+            ("Operating weight",
+             f"{wt['m_operating_kg']:,.0f} kg  ({wt['m_operating_kg']/1000:.2f} t)  "
+             f"[liquid at NLL: {wt['m_liquid_op_kg']:,.0f} kg]"),
+            ("Hydrotest weight",
+             f"{wt['m_hydrotest_kg']:,.0f} kg  ({wt['m_hydrotest_kg']/1000:.2f} t)  "
+             f"[water fill: {wt['m_water_ht_kg']:,.0f} kg]"),
+        ])
+        _sub_heading(doc, "Dry weight breakdown")
+        _data_table(doc,
+            ["Component", "Mass (kg)", "% of dry"],
+            [
+                ["Shell",               f"{wt['m_shell_kg']:,.0f}",    _wpct(wt['m_shell_kg'])],
+                ["Heads × 2",           f"{wt['m_heads_kg']:,.0f}",    _wpct(wt['m_heads_kg'])],
+                [f"Nozzles ({len(wt['nozzle_detail'])})",
+                                         f"{wt['m_nozzles_kg']:,.0f}", _wpct(wt['m_nozzles_kg'])],
+                ["Saddles × 2",         f"{wt['m_saddles_kg']:,.0f}",  _wpct(wt['m_saddles_kg'])],
+                ["Internals",           f"{wt['m_internals_kg']:,.0f}",_wpct(wt['m_internals_kg'])],
+                [f"Misc (+{wt['misc_factor']*100:.0f} %)",
+                                         f"{wt['m_misc_kg']:,.0f}",   f"{wt['misc_factor']*100:.0f} %"],
+                ["Total dry",           f"{wt['m_dry_kg']:,.0f}",      "100 %"],
+            ],
+            col_w=[6.0, 3.5, 3.0],
+        )
 
     # ── E — Liquid Levels ─────────────────────────────────────────────────────
     _section_heading(doc, "E", "Liquid Levels & Volumes")

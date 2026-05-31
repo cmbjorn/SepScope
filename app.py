@@ -12,7 +12,7 @@ from engines import (
     MATERIALS, allowable_stress,
     HeadType, head_geometry, head_thickness,
     shell_thickness, nozzle_on_head, reinforcement_check,
-    separator_check,
+    separator_check, internal_loads, vessel_weights,
     gas_properties, liquid_properties, FluidProps, GAS_FLUIDS, LIQ_FLUIDS,
 )
 from engines.nozzle_geometry import (
@@ -22,6 +22,8 @@ from engines.nozzle_geometry import (
 from engines.head_geometry import _FD_CROWN_RATIO, _FD_KNUCKLE_RATIO
 from engines.vessel_volume import vessel_volumes
 from standards import DN_SIZES, EN_PN_RATINGS, ASME_CLASS_PRESSURE_20C, max_pn_for_temperature
+
+_CD_DISP = 0.61   # baffle hole discharge coefficient (displayed in UI captions)
 
 # Level tag visual styles: (line-colour, dash-style, line-width)
 _LEVEL_STYLE: dict[str, tuple[str, str, float]] = {
@@ -469,35 +471,70 @@ def _vessel_figure(
         )
 
         if loc in ("Left head", "Right head") and nres is not None:
-            # ── Head nozzle: rectangular stub projecting axially outward ──────
+            # ── Head nozzle: pipe body + flange plate ─────────────────────────
             nx   = -nres.z_on_head_mm if loc == "Left head" else L_shell + nres.z_on_head_mm
             ny   = nres.y_nozzle_mm
-            hw   = _nozzle_w(nres.nozzle_OR_mm)    # true OD radius (1:1 scale)
+            OD   = NOZZLE_OD.get(dn, dn * 1.05)
+            hw   = OD / 2                           # OD radius
+            t_w  = NOZZLE_WALL_T.get(dn, max(OD * 0.07, 5.0))
+            bw   = max(OD / 2 - t_w, 2.0)          # bore radius
             sign = -1.0 if loc == "Left head" else 1.0
-            stub = max(hw * 1.2, 30.0)             # ~1.2 × OD radius projection
-            x_tip = nx + sign * stub
+            stub     = max(hw * 2.2, 50.0)
+            fl_r     = hw * 0.70                    # flange outer half-height
+            fl_t     = max(hw * 0.14, 10.0)         # flange plate thickness
+            boss_ext = hw * 0.10
+            boss_t   = max(hw * 0.09, 7.0)
+            pipe_h   = stub - fl_t
+            x_boss   = nx + sign * boss_t
+            x_pipe   = nx + sign * pipe_h
+            x_flange = nx + sign * stub
+            x_tip    = x_flange   # alias used by label/halo code below
             hover += (
                 f"<br>From top: {nres.d_from_top_mm:.0f} mm"
                 f"<br>Zone: {nres.zone}"
             )
-            # Nozzle body (rectangle)
-            bx0, bx1 = min(nx, x_tip), max(nx, x_tip)
+            # Boss collar at vessel wall
+            bx0c, bx1c = min(nx, x_boss), max(nx, x_boss)
+            fig.add_trace(go.Scatter(
+                x=[bx0c, bx1c, bx1c, bx0c, bx0c],
+                y=[ny - hw - boss_ext, ny - hw - boss_ext,
+                   ny + hw + boss_ext, ny + hw + boss_ext, ny - hw - boss_ext],
+                fill="toself", fillcolor=nfill,
+                line=dict(color=nc, width=1.8),
+                showlegend=False, hoverinfo="skip",
+            ))
+            # Pipe body — colored fill (visible against white chart background)
+            bx0, bx1 = min(x_boss, x_pipe), max(x_boss, x_pipe)
             fig.add_trace(go.Scatter(
                 x=[bx0, bx1, bx1, bx0, bx0],
                 y=[ny - hw, ny - hw, ny + hw, ny + hw, ny - hw],
-                fill="toself", fillcolor="rgba(255,255,255,0.95)",
-                line=dict(color=nc, width=2.8),
+                fill="toself", fillcolor=nfill,
+                line=dict(color=nc, width=2.0),
                 showlegend=False, hovertemplate=hover + "<extra></extra>",
             ))
-            # Flange face (bold line at tip)
-            fig.add_shape(type="line", x0=x_tip, x1=x_tip,
-                          y0=ny - hw - 6, y1=ny + hw + 6,
-                          line=dict(color=nc, width=4))
-            # Nozzle opening marker
+            # Bore — white center with thin border, shows hollow pipe
             fig.add_trace(go.Scatter(
-                x=[x_tip], y=[ny], mode="markers",
-                marker=dict(size=min(11.0, hw * 1.9), color="white",
-                            line=dict(color=nc, width=2.4)),
+                x=[bx0, bx1, bx1, bx0, bx0],
+                y=[ny - bw, ny - bw, ny + bw, ny + bw, ny - bw],
+                fill="toself", fillcolor="rgba(255,255,255,1.0)",
+                line=dict(color=nc, width=1.0),
+                showlegend=False, hoverinfo="skip",
+            ))
+            # Flange plate — colored ring (wider than pipe)
+            fx0, fx1 = min(x_pipe, x_flange), max(x_pipe, x_flange)
+            fig.add_trace(go.Scatter(
+                x=[fx0, fx1, fx1, fx0, fx0],
+                y=[ny - fl_r, ny - fl_r, ny + fl_r, ny + fl_r, ny - fl_r],
+                fill="toself", fillcolor=nfill,
+                line=dict(color=nc, width=2.5),
+                showlegend=False, hoverinfo="skip",
+            ))
+            # Bore through flange — white center shows pipe opening
+            fig.add_trace(go.Scatter(
+                x=[fx0, fx1, fx1, fx0, fx0],
+                y=[ny - bw, ny - bw, ny + bw, ny + bw, ny - bw],
+                fill="toself", fillcolor="rgba(255,255,255,1.0)",
+                line=dict(color=nc, width=1.0),
                 showlegend=False, hoverinfo="skip",
             ))
             # Pulsing halo for problem nozzles (warning -> orange, error -> red)
@@ -568,31 +605,60 @@ def _vessel_figure(
                           f"{_clr2:.0f} mm")
 
         elif loc in ("Shell — top", "Shell — bottom"):
-            # ── Shell top/bottom: rectangular stub (elevation view) ───────────
+            # ── Shell top/bottom: pipe body + flange plate ────────────────────
             nx     = nz_cfg["axial_mm"]
             sign   = 1.0 if loc == "Shell — top" else -1.0
             y_wall = sign * R
-            hw     = _nozzle_w(nOR)
-            stub   = max(hw * 1.2, 30.0)           # ~1.2 × OD radius projection
-            y_tip  = y_wall + sign * stub
-            # Nozzle body (rectangle, drawn as Scatter so it renders above zone fills)
+            OD_s   = NOZZLE_OD.get(dn, dn * 1.05)
+            hw     = OD_s / 2
+            bw     = hw * 0.70   # visual bore radius (70 % of pipe radius)
+            stub     = max(hw * 2.2, 50.0)
+            fl_r     = hw * 0.70
+            fl_t     = max(hw * 0.14, 10.0)
+            boss_ext = hw * 0.10
+            boss_t   = max(hw * 0.09, 7.0)
+            y_boss   = y_wall + sign * boss_t
+            y_pipe   = y_wall + sign * (stub - fl_t)
+            y_tip    = y_wall + sign * stub
+            # Boss collar at vessel wall
+            fig.add_trace(go.Scatter(
+                x=[nx - hw - boss_ext, nx + hw + boss_ext,
+                   nx + hw + boss_ext, nx - hw - boss_ext, nx - hw - boss_ext],
+                y=[y_wall, y_wall, y_boss, y_boss, y_wall],
+                fill="toself", fillcolor=nfill,
+                line=dict(color=nc, width=1.8),
+                showlegend=False, hoverinfo="skip",
+            ))
+            # Pipe body — colored fill (visible against white chart background)
             fig.add_trace(go.Scatter(
                 x=[nx - hw, nx + hw, nx + hw, nx - hw, nx - hw],
-                y=[y_wall, y_wall, y_tip, y_tip, y_wall],
-                fill="toself", fillcolor="rgba(255,255,255,0.95)",
-                line=dict(color=nc, width=2.8),
+                y=[y_boss, y_boss, y_pipe, y_pipe, y_boss],
+                fill="toself", fillcolor=nfill,
+                line=dict(color=nc, width=2.0),
                 showlegend=False, hovertemplate=hover + "<extra></extra>",
             ))
-            # Flange face (bold horizontal line at tip)
-            fig.add_shape(type="line",
-                          x0=nx - hw - 6, x1=nx + hw + 6,
-                          y0=y_tip, y1=y_tip,
-                          line=dict(color=nc, width=4))
-            # Nozzle opening marker
+            # Bore — white center with thin border, shows hollow pipe
             fig.add_trace(go.Scatter(
-                x=[nx], y=[y_tip], mode="markers",
-                marker=dict(size=min(11.0, hw * 1.9), color="white",
-                            line=dict(color=nc, width=2.4)),
+                x=[nx - bw, nx + bw, nx + bw, nx - bw, nx - bw],
+                y=[y_boss, y_boss, y_pipe, y_pipe, y_boss],
+                fill="toself", fillcolor="rgba(255,255,255,1.0)",
+                line=dict(color=nc, width=1.0),
+                showlegend=False, hoverinfo="skip",
+            ))
+            # Flange plate — colored ring (wider than pipe)
+            fig.add_trace(go.Scatter(
+                x=[nx - fl_r, nx + fl_r, nx + fl_r, nx - fl_r, nx - fl_r],
+                y=[y_pipe, y_pipe, y_tip, y_tip, y_pipe],
+                fill="toself", fillcolor=nfill,
+                line=dict(color=nc, width=2.5),
+                showlegend=False, hoverinfo="skip",
+            ))
+            # Bore through flange — white center shows pipe opening
+            fig.add_trace(go.Scatter(
+                x=[nx - bw, nx + bw, nx + bw, nx - bw, nx - bw],
+                y=[y_pipe, y_pipe, y_tip, y_tip, y_pipe],
+                fill="toself", fillcolor="rgba(255,255,255,1.0)",
+                line=dict(color=nc, width=1.0),
                 showlegend=False, hoverinfo="skip",
             ))
             # Pulsing halo for problem nozzles (warning -> orange, error -> red)
@@ -620,24 +686,34 @@ def _vessel_figure(
                 _y_nz_bot = min(_y_nz_bot, y_tip - 22)   # −22 for tag label
 
         else:
-            # ── Shell side: concentric circles at y=0 (end-on in elevation) ──
-            # Side nozzles project perpendicular to the page; in side view they
-            # appear as circles centred on the vessel horizontal axis.
-            nx    = nz_cfg["axial_mm"]
-            cr    = nOR                             # true OD radius (end-on circle)
-            bore_r = cr * 0.85                      # approximate bore radius
+            # ── Shell side: annular ring (end-on view) ────────────────────────
+            nx       = nz_cfg["axial_mm"]
+            OD_ss    = NOZZLE_OD.get(dn, dn * 1.05)
+            cr       = OD_ss / 2          # pipe OD radius
+            fl_r_ss  = cr * 1.40          # flange outer radius (≈ 1.4 × pipe radius)
+            bore_r   = cr * 0.70          # visual bore radius (70 % of pipe radius)
+            # Flange outer ring: circle outline only (add_shape = transparent fill, visible stroke)
+            fig.add_shape(
+                type="circle", xref="x", yref="y",
+                x0=nx - fl_r_ss, y0=-fl_r_ss,
+                x1=nx + fl_r_ss, y1=fl_r_ss,
+                fillcolor="rgba(0,0,0,0)",
+                line=dict(color=nc, width=3.0),
+            )
+            # Pipe OD disk — colored fill, bounded by flange ring
             fig.add_trace(go.Scatter(
                 x=[nx + cr * math.cos(t) for t in theta_pts],
                 y=[cr * math.sin(t) for t in theta_pts],
-                fill="toself", fillcolor="rgba(255,255,255,0.95)",
-                line=dict(color=nc, width=3.0), showlegend=False,
+                fill="toself", fillcolor=nfill,
+                line=dict(color=nc, width=2.5), showlegend=False,
                 hovertemplate=hover + "<extra></extra>",
             ))
+            # Bore disk — white, reveals pipe wall ring between cr and bore_r
             fig.add_trace(go.Scatter(
                 x=[nx + bore_r * math.cos(t) for t in theta_pts],
                 y=[bore_r * math.sin(t) for t in theta_pts],
-                fill="toself", fillcolor="rgba(255,255,255,0.95)",
-                line=dict(color=nc, width=2.2, dash="dot"), showlegend=False,
+                fill="toself", fillcolor="rgba(255,255,255,1.0)",
+                line=dict(color=nc, width=1.5), showlegend=False,
                 hoverinfo="skip",
             ))
             fig.add_trace(go.Scatter(
@@ -800,8 +876,8 @@ def _vessel_figure(
             )
 
     saddle_depth = (saddle_h + saddle_base_h + 40) if saddle_a_mm > 0 else 0
-    x_min = -(h_head + 80)
-    x_max = L_shell + h_head + 80
+    x_min = -1500
+    x_max = L_shell + 1500
     # Y-axis: tight range — only what's needed to show vessel + nozzle stubs + labels.
     # _y_nz_top / _y_nz_bot hold the extreme y-coordinates of all shell nozzle stubs.
     _top_clearance = max(t_shell_nom, 15) + 40
@@ -1713,13 +1789,11 @@ def main():
 
         Di = st.number_input("Inner diameter Di (mm)", min_value=100.0, max_value=10000.0,
                              value=1800.0, step=50.0, key="Di")
-        L_shell = st.number_input("Shell length T-T (mm)", min_value=100.0, max_value=50000.0,
+        L_shell = st.number_input("Shell length T-T (mm) — cylinder only",
+                                  min_value=100.0, max_value=50000.0,
                                   value=6000.0, step=100.0, key="L_shell",
-                                  help="Tangent-to-tangent cylinder length (excludes head depths).")
-        P_op_barg = st.number_input("Operating pressure (barg)", min_value=0.0, max_value=500.0,
-                                    value=18.0, step=0.5, key="P_op_barg")
-        T_op_C = st.number_input("Operating temperature (°C)", min_value=-200.0, max_value=500.0,
-                                  value=90.0, step=5.0, key="T_op_C")
+                                  help="Tangent-to-tangent cylinder length (excludes head depths). "
+                                       "Pole-to-pole = shell + 2 × head depth.")
         P_barg = st.number_input("Design pressure (barg)", min_value=0.1, max_value=500.0,
                                  value=20.0, step=0.5, key="P_barg")
         T_C = st.number_input("Design temperature (°C)", min_value=-200.0, max_value=500.0,
@@ -1842,65 +1916,20 @@ def main():
             key="head_type",
         )
 
+        # Standard/default geometry for screener use — no user overrides needed
         crown_ratio, knuckle_ratio, alpha_deg_cone, ellipse_ratio = 1.0, 0.1, 30.0, 2.0
-        with st.expander("Head geometry (advanced)", expanded=False):
-            if head_type == HeadType.TORISPHERICAL:
-                crown_ratio = st.number_input(
-                    "Crown radius ratio R_c/Di", min_value=0.5, max_value=1.5,
-                    value=1.0, step=0.05, key="crown_ratio",
-                    help="Standard Klöpper: 1.0 (R_c = Di).  Korbbogen: 0.8.")
-                knuckle_ratio = st.number_input(
-                    "Knuckle radius ratio r_k/Di", min_value=0.06, max_value=0.3,
-                    value=0.1, step=0.01, key="knuckle_ratio",
-                    help="Minimum per EN/ASME: 0.06.")
-            elif head_type == HeadType.FLANGED_DISHED:
-                crown_ratio   = 1.0
-                knuckle_ratio = 0.06
-                st.info(
-                    "**Fixed geometry per ASME UG-32(e):**  "
-                    "Crown R_c = Di · Knuckle r_k = 0.06·Di (code minimum).  "
-                    "Shallower than Klöpper (r_k = 0.10·Di); larger crown zone."
-                )
-            elif head_type == HeadType.CONICAL:
-                alpha_deg_cone = st.number_input(
-                    "Half-apex angle α (°)", min_value=5.0, max_value=75.0,
-                    value=30.0, step=1.0, key="alpha_deg")
-            elif head_type == HeadType.ELLIPSOIDAL:
-                ellipse_ratio = st.number_input(
-                    "Ellipse ratio Di/(2h)", min_value=1.0, max_value=4.0,
-                    value=2.0, step=0.1, key="ellipse_ratio",
-                    help="2.0 = standard 2:1 semi-ellipsoidal.")
+        if head_type == HeadType.FLANGED_DISHED:
+            knuckle_ratio = 0.06   # ASME UG-32(e) fixed geometry
 
         st.divider()
         st.header("Saddle supports")
 
-        # Rescale saddle position proportionally when L_shell changes
-        _prev_L = st.session_state.get("_saddle_prev_L_shell")
-        if _prev_L is None:
-            # First render — seed the key from the formula
-            st.session_state["saddle_a"] = float(round(L_shell * 0.2 / 50) * 50)
-        elif _prev_L != L_shell and _prev_L > 0:
-            cur = st.session_state.get("saddle_a", L_shell * 0.2)
-            scaled = cur * (L_shell / _prev_L)
-            # clamp to valid range and snap to nearest 50 mm step
-            scaled = float(round(min(scaled, L_shell / 2) / 50) * 50)
-            st.session_state["saddle_a"] = scaled
-        st.session_state["_saddle_prev_L_shell"] = L_shell
-
-        saddle_a_mm = st.number_input(
-            "Saddle position — from tangent (mm)",
-            min_value=0.0, max_value=float(L_shell / 2),
-            value=float(round(L_shell * 0.2 / 50) * 50),   # used only if key absent
-            step=50.0, key="saddle_a",
-            help="Distance from each tangent line to the saddle centreline. "
-                 "Rule of thumb: ~0.2 × shell length.",
-        )
-        saddle_w_mm = st.number_input(
-            "Saddle width (mm)",
-            min_value=50.0, max_value=2000.0,
-            value=max(200.0, float(round(Di * 0.12 / 50) * 50)),
-            step=50.0, key="saddle_w",
-            help="Contact width of saddle against vessel.",
+        # Auto-calculated — rule of thumb, adequate for screener level
+        saddle_a_mm = float(round(L_shell * 0.20 / 50) * 50)   # 20 % of T-T
+        saddle_w_mm = float(max(200.0, round(Di * 0.12 / 50) * 50))  # ~12 % of Di
+        st.caption(
+            f"Position from tangent: **{saddle_a_mm:.0f} mm**  (0.2 × T-T)  ·  "
+            f"Width: **{saddle_w_mm:.0f} mm**  (~0.12 × Di)"
         )
 
         # ── Nozzle session-state init + proportional rescale when L_shell changes ──
@@ -1982,17 +2011,14 @@ def main():
 
         st.divider()
         st.header("Separator process")
-        st.caption(
-            f"Fluid properties at design conditions: **{P_barg:.1f} barg, {T_C:.0f} °C**"
-            + (f"  (operating: {P_op_barg:.1f} barg, {T_op_C:.0f} °C)"
-               if P_op_barg is not None and T_op_C is not None else "")
-        )
 
-        L_baffle_mm = st.number_input(
-            "Baffle setback from tangent (mm)", min_value=0.0, max_value=float(L_shell / 2),
-            value=400.0, step=50.0, key="L_baffle",
-            help="Axial distance from each tangent line to the inlet baffle. "
-                 "Effective separation length = shell length − 2 × this value.",
+        _opc1, _opc2 = st.columns(2)
+        P_op_barg = _opc1.number_input("Op. pressure (barg)", min_value=0.0, max_value=500.0,
+                                        value=18.0, step=0.5, key="P_op_barg")
+        T_op_C = _opc2.number_input("Op. temperature (°C)", min_value=-200.0, max_value=500.0,
+                                     value=90.0, step=5.0, key="T_op_C")
+        st.caption(
+            f"Fluid properties at design conditions — **{P_barg:.1f} barg, {T_C:.0f} °C**"
         )
 
         # ── Gas phase ─────────────────────────────────────────────────────────
@@ -2054,6 +2080,7 @@ def main():
                    f"μ = **{liq_props.mu_Pas*1e3:.3f} mPa·s**")
         Q_liq_m3h = st.number_input("Liquid flow rate (m³/h)", min_value=0.001,
                                      max_value=1e6, value=10.0, step=1.0, key="Q_liq")
+        st.caption("If more than one inlet nozzle is defined, flow is assumed to split equally between inlets.")
 
         # convenience aliases kept for separator_check call below
         rho_gas = gas_props.rho_kgm3
@@ -2065,6 +2092,13 @@ def main():
         def _yn(label, key, default="Yes"):
             return st.radio(label, ["Yes", "No"], index=0 if default == "Yes" else 1,
                             horizontal=True, key=key) == "Yes"
+
+        L_baffle_mm = st.number_input(
+            "Baffle setback from tangent (mm)", min_value=0.0, max_value=float(L_shell / 2),
+            value=400.0, step=50.0, key="L_baffle",
+            help="Axial distance from each tangent line to the inlet baffle. "
+                 "Effective separation length = shell length − 2 × this value.",
+        )
 
         has_baffles       = _yn("Baffle plates",               "has_baffles")
         baffle_open_pct   = 20.0
@@ -2091,7 +2125,7 @@ def main():
         has_vortex_brk = _yn("Vortex breaker (liquid outlet)", "has_vortex")
 
         # ── Separator settings ────────────────────────────────────────────────
-        st.markdown("**Separator settings**")
+        st.markdown("**API 12J sizing criteria**")
         if not has_meshpad:
             K_sb = st.number_input(
                 "Souders-Brown K (open vessel, m/s)", min_value=0.01, max_value=0.5,
@@ -2127,11 +2161,11 @@ def main():
         st.divider()
         st.markdown("**LDV — Liquid Design Volume**")
         st.caption(
-            "Minimum liquid inventory required to fill downstream equipment that are "
-            "partially empty during operation or startup. "
-            "LDV = (VB → LZLL) × SF  +  (LALL → LAL)."
+            "Minimum liquid inventory required to fill downstream equipment. "
+            "Enter the required LDV volume and a safety factor — this gives the required volume. "
+            "Two independent checks: is VB → LZLL ≥ required LDV?  and  is LZLL → LALL ≥ required LDV?"
         )
-        include_ldv = _yn("Calculate LDV", "include_ldv")
+        include_ldv = _yn("Calculate LDV", "include_ldv", default="No")
         vb_offset_mm = 0.0
         ldv_sf = 1.5
         ldv_target_m3: float | None = None   # None = not set
@@ -2145,11 +2179,11 @@ def main():
                      "0 = use actual vessel bottom.",
             )
             ldv_sf = st.number_input(
-                "Safety factor — VB → LZLL zone",
+                "Safety factor",
                 min_value=1.0, max_value=3.0, value=1.5, step=0.05,
                 key="ldv_sf",
-                help="The VB→LZLL volume is multiplied by this factor before adding to the LDV. "
-                     "Accounts for instrument uncertainty, cavitation margin, and measurement deadband. "
+                help="Applied to the required LDV target: Required = Target × SF. "
+                     "Accounts for instrument uncertainty, measurement deadband, and operating margin. "
                      "Typical: 1.25–2.0.",
             )
             if _yn("Set specific LDV target", "ldv_set_target", default="No"):
@@ -2778,16 +2812,12 @@ def main():
     if include_ldv:
         _lzll_h = levels_mm_vol.get("LZLL", Di * 0.05)
         _lall_h = levels_mm_vol.get("LALL", Di * 0.10)
-        _lal_h  = levels_mm_vol.get("LAL",  Di * 0.20)
-        _nll_h  = levels_mm_vol.get("NLL",  Di * 0.50)
         _eff_vb = max(0.0, min(vb_offset_mm, max(0.0, _lzll_h)))  # clamp to [0, LZLL]
 
         _ldv_levels_calc = {
             "LDV_VB":   _eff_vb,
             "LDV_LZLL": _lzll_h,
             "LDV_LALL": _lall_h,
-            "LDV_LAL":  _lal_h,
-            "LDV_NLL":  _nll_h,
         }
         _ldv_vol = vessel_volumes(
             head_type, Di, L_shell, _ldv_levels_calc,
@@ -2798,8 +2828,8 @@ def main():
         _vmap = {r["tag"]: r["vol_m3"] for r in _ldv_vol["levels"]}
 
         # Calculate segment volumes
-        _seg_a = max(0.0, _vmap.get("LDV_LZLL", 0.0) - _vmap.get("LDV_VB", 0.0))
-        _seg_b = max(0.0, _vmap.get("LDV_LAL", 0.0) - _vmap.get("LDV_LALL", 0.0))
+        _seg_a = max(0.0, _vmap.get("LDV_LZLL", 0.0) - _vmap.get("LDV_VB",   0.0))
+        _seg_b = max(0.0, _vmap.get("LDV_LALL", 0.0) - _vmap.get("LDV_LZLL", 0.0))
 
         # If no specific LDV target is set, use the segments themselves scaled by SF
         _ldv_required = None
@@ -2815,8 +2845,6 @@ def main():
             "eff_vb_mm":    _eff_vb,
             "lzll_mm":      _lzll_h,
             "lall_mm":      _lall_h,
-            "lal_mm":       _lal_h,
-            "nll_mm":       _nll_h,
             "seg_a_m3":     _seg_a,
             "seg_b_m3":     _seg_b,
             "ldv_required_m3": _ldv_required,  # None if not set; otherwise LDV × SF
@@ -2846,6 +2874,49 @@ def main():
         V_total_at_nll_m3=nll_vol,
         V_total_at_lahh_m3=lahh_vol,
         V_total_vessel_m3=vol_res["total_m3"],
+    )
+
+    # ── Internal mechanical loads (LDV startup surge) ─────────────────────────
+    _int_loads: dict | None = None
+    if _ldv_result is not None and has_baffles:
+        _inlet_nzs = [nz for nz, *_ in nozzle_results if nz.get("service") == "Inlet"]
+        _inp_nz    = _inlet_nzs[0] if _inlet_nzs else None
+        _nz_dn     = _inp_nz["dn"] if _inp_nz else 100
+        _nz_pn     = _inp_nz.get("pn", 25) if _inp_nz else 25
+        _fy        = MATERIALS.get(mat_key, {}).get("Rp02", fd * 1.5)
+        _int_loads = internal_loads(
+            Di_mm=Di, rho_liq=rho_liq, rho_gas=rho_gas,
+            n_inlets=n_inlets,
+            nozzle_dn=_nz_dn, nozzle_pn=_nz_pn, code_key=code_key,
+            baffle_open_pct=baffle_open_pct,
+            U_act_ms=sep_res.U_act_ms,
+            seg_a_m3=_ldv_result["seg_a_m3"],
+            seg_b_m3=_ldv_result["seg_b_m3"],
+            fd_MPa=fd, fy_MPa=_fy,
+        )
+
+    # ── Weight estimate ───────────────────────────────────────────────────────
+    _t_baffle_design = (_int_loads["t_baffle_design_mm"] if _int_loads else 8.0)
+    _head_label = head_label_map.get(head_type, str(head_type))
+    _weight_result = vessel_weights(
+        Di_mm=Di, L_shell_mm=L_shell,
+        t_shell_mm=shell_res.t_nom_mm, t_head_mm=head_res.t_nom_mm,
+        head_type_str=_head_label,
+        rho_mat_kgm3=MATERIALS[mat_key]["rho"],
+        nozzle_list=st.session_state.get("nozzles", []),
+        code_key=code_key,
+        has_baffles=has_baffles,
+        t_baffle_mm=_t_baffle_design,
+        baffle_open_pct=baffle_open_pct,
+        has_meshpad=has_meshpad,
+        has_inlet_dev=has_inlet_dev, n_inlets=n_inlets,
+        has_vortex_brk=has_vortex_brk,
+        saddle_w_mm=saddle_w_mm,
+        V_nll_m3=nll_vol,
+        V_total_m3=vol_res["total_m3"],
+        rho_liq_kgm3=rho_liq,
+        crown_ratio=crown_ratio, knuckle_ratio=knuckle_ratio,
+        alpha_deg_cone=alpha_deg_cone, ellipse_ratio=ellipse_ratio,
     )
 
     # ── Process streams summary ───────────────────────────────────────────────
@@ -3047,138 +3118,196 @@ def main():
             st.caption(
                 "Minimum liquid inventory required to fill downstream equipment that are "
                 "partially empty during operation or startup. "
-                "Volumes include full vessel geometry (cylinder + both endcaps)."
+                "Two independent checks: Segment A (VB → LZLL) ≥ Required?  and  Segment B (LZLL → LALL) ≥ Required?"
             )
 
-            _lc1, _lc2, _lc3, _lc4 = st.columns(4)
-            _lc1.metric(
-                "Seg A — VB → LZLL (raw)",
-                f"{ldv['seg_a_raw_m3'] * 1000:.1f} L  ({ldv['seg_a_raw_m3']:.4f} m³)",
-                help=f"Volume from effective VB ({ldv['eff_vb_mm']:.0f} mm above vessel bottom) "
-                     f"to LZLL ({ldv['lzll_mm']:.0f} mm). "
-                     f"Before safety factor.",
-            )
-            _lc2.metric(
-                f"Seg A × SF {ldv['sf']:.2f}",
-                f"{ldv['seg_a_m3'] * 1000:.1f} L  ({ldv['seg_a_m3']:.4f} m³)",
-                delta=f"SF adds {(ldv['seg_a_m3'] - ldv['seg_a_raw_m3']) * 1000:.1f} L",
-                delta_color="off",
-                help=f"Segment A after safety factor {ldv['sf']:.2f}× — accounts for "
-                     "instrument deadband, pump cavitation margin, and measurement uncertainty.",
-            )
-            _lc3.metric(
-                "Seg B — LALL → LAL",
-                f"{ldv['seg_b_m3'] * 1000:.1f} L  ({ldv['seg_b_m3']:.4f} m³)",
-                help=f"Volume from LALL ({ldv['lall_mm']:.0f} mm) to LAL ({ldv['lal_mm']:.0f} mm). "
-                     "Low-alarm response buffer — liquid consumed between alarm and low-level action.",
-            )
-            _lc4.metric(
-                "LDV Total",
-                f"{ldv['ldv_total_m3'] * 1000:.1f} L  ({ldv['ldv_total_m3']:.4f} m³)",
-                delta=("OK — NLL inventory sufficient" if ldv["ok"]
-                       else "INSUFFICIENT — NLL inventory below LDV"),
-                delta_color="normal" if ldv["ok"] else "inverse",
-                help="Seg A (×SF) + Seg B. Must be ≤ available liquid inventory at NLL.",
-            )
+            if ldv.get("target_m3") is not None and ldv.get("ldv_required_m3") is not None:
+                # Show metrics when a specific LDV target is set
+                _lc1, _lc2, _lc3, _lc4 = st.columns(4)
+                _lc1.metric(
+                    "Required LDV (with SF)",
+                    f"{ldv['ldv_required_m3'] * 1000:.1f} L",
+                    help=f"Target LDV {ldv['target_m3']*1000:.1f} L  ×  SF {ldv['sf']:.2f}",
+                )
+                _lc2.metric(
+                    "Seg A (VB → LZLL)",
+                    f"{ldv['seg_a_m3'] * 1000:.1f} L",
+                    delta="✓ PASS" if ldv.get("seg_a_ok") else "✗ FAIL",
+                    delta_color="normal" if ldv.get("seg_a_ok") else "inverse",
+                    help=f"Volume from effective VB ({ldv['eff_vb_mm']:.0f} mm) to LZLL ({ldv['lzll_mm']:.0f} mm).",
+                )
+                _lc3.metric(
+                    "Seg B (LZLL → LALL)",
+                    f"{ldv['seg_b_m3'] * 1000:.1f} L",
+                    delta="✓ PASS" if ldv.get("seg_b_ok") else "✗ FAIL",
+                    delta_color="normal" if ldv.get("seg_b_ok") else "inverse",
+                    help=f"Volume from LZLL ({ldv['lzll_mm']:.0f} mm) to LALL ({ldv['lall_mm']:.0f} mm).",
+                )
+                _lc4.metric(
+                    "Overall",
+                    "✓ PASS" if ldv.get("ok") else "✗ FAIL",
+                    help="Both Segment A and Segment B must pass the check.",
+                    delta_color="normal" if ldv.get("ok") else "inverse",
+                )
+            else:
+                # Show basic metrics when no target is set
+                _lc1, _lc2, _lc3 = st.columns(3)
+                _lc1.metric(
+                    "Seg A (VB → LZLL)",
+                    f"{ldv['seg_a_m3'] * 1000:.1f} L",
+                    help=f"Volume from effective VB ({ldv['eff_vb_mm']:.0f} mm) to LZLL ({ldv['lzll_mm']:.0f} mm).",
+                )
+                _lc2.metric(
+                    "Seg B (LZLL → LALL)",
+                    f"{ldv['seg_b_m3'] * 1000:.1f} L",
+                    help=f"Volume from LZLL ({ldv['lzll_mm']:.0f} mm) to LALL ({ldv['lall_mm']:.0f} mm).",
+                )
+                _lc3.metric(
+                    "Safety Factor",
+                    f"{ldv['sf']:.2f}",
+                    help="Specify a target LDV above to perform checks.",
+                )
 
             # Breakdown table
             _ldv_rows = [
                 {
                     "Segment": "A — VB → LZLL",
-                    "From": f"{ldv['eff_vb_mm']:.0f} mm"
-                            + (f"  (VB + {ldv['eff_vb_mm']:.0f} mm)" if ldv["eff_vb_mm"] > 0 else "  (vessel bottom)"),
+                    "From": f"{ldv['eff_vb_mm']:.0f} mm",
                     "To": f"{ldv['lzll_mm']:.0f} mm  (LZLL)",
-                    "Raw volume": f"{ldv['seg_a_raw_m3']*1000:.1f} L",
-                    "× SF": f"{ldv['sf']:.2f}",
-                    "Effective volume": f"{ldv['seg_a_m3']*1000:.1f} L",
+                    "Volume": f"{ldv['seg_a_m3']*1000:.1f} L",
+                    "Status": ("✓ PASS" if ldv.get("seg_a_ok") else "✗ FAIL") if ldv.get("target_m3") else "—",
                 },
                 {
-                    "Segment": "B — LALL → LAL",
-                    "From": f"{ldv['lall_mm']:.0f} mm  (LALL)",
-                    "To": f"{ldv['lal_mm']:.0f} mm  (LAL)",
-                    "Raw volume": f"{ldv['seg_b_m3']*1000:.1f} L",
-                    "× SF": "1.00",
-                    "Effective volume": f"{ldv['seg_b_m3']*1000:.1f} L",
-                },
-                {
-                    "Segment": "LDV TOTAL",
-                    "From": "—", "To": "—",
-                    "Raw volume": "—",
-                    "× SF": "—",
-                    "Effective volume": f"**{ldv['ldv_total_m3']*1000:.1f} L**",
+                    "Segment": "B — LZLL → LALL",
+                    "From": f"{ldv['lzll_mm']:.0f} mm  (LZLL)",
+                    "To": f"{ldv['lall_mm']:.0f} mm  (LALL)",
+                    "Volume": f"{ldv['seg_b_m3']*1000:.1f} L",
+                    "Status": ("✓ PASS" if ldv.get("seg_b_ok") else "✗ FAIL") if ldv.get("target_m3") else "—",
                 },
             ]
             st.dataframe(pd.DataFrame(_ldv_rows), hide_index=True, use_container_width=True)
 
-            # ── Specific target comparison (when set) ────────────────────────
-            if ldv.get("target_m3") is not None:
-                tgt_L    = ldv["target_m3"] * 1000
-                tgt_sf_L = ldv["target_m3"] * ldv["sf"] * 1000
-                raw_L    = ldv["ldv_raw_m3"] * 1000
-                inv_L    = ldv["nll_inv_m3"] * 1000
-                st.markdown("**Target LDV comparison**")
-                _tc1, _tc2 = st.columns(2)
-                _delta1 = raw_L - tgt_L
-                _tc1.metric(
-                    "Level volumes (before SF) vs target",
-                    f"{raw_L:.1f} L",
-                    delta=f"{'surplus' if _delta1 >= 0 else 'shortfall'} {_delta1:+.1f} L vs target {tgt_L:.1f} L",
-                    delta_color="normal" if ldv["target_ok"] else "inverse",
-                    help="Volume defined by level setpoints (Seg A raw + Seg B) compared "
-                         "to the required LDV before safety factor. "
-                         "Shows whether the level setpoints alone cover the downstream volume.",
-                )
-                _delta2 = inv_L - tgt_sf_L
-                _tc2.metric(
-                    f"NLL inventory vs target × SF {ldv['sf']:.2f}",
-                    f"{inv_L:.1f} L",
-                    delta=f"{'surplus' if _delta2 >= 0 else 'shortfall'} {_delta2:+.1f} L vs {tgt_sf_L:.1f} L",
-                    delta_color="normal" if ldv["target_sf_ok"] else "inverse",
-                    help=f"Available liquid at NLL (from VB to NLL) compared to "
-                         f"target × SF = {tgt_L:.1f} × {ldv['sf']:.2f} = {tgt_sf_L:.1f} L. "
-                         "This is the conservative requirement the vessel must meet.",
-                )
-                if ldv["target_ok"] and ldv["target_sf_ok"]:
-                    st.success(
-                        f"Target LDV **{tgt_L:.1f} L** covered — "
-                        f"level volumes: {raw_L:.1f} L (raw), NLL inventory: {inv_L:.1f} L ≥ {tgt_sf_L:.1f} L (×SF).",
-                        icon="✅",
-                    )
-                else:
-                    _msgs = []
-                    if not ldv["target_ok"]:
-                        _msgs.append(
-                            f"level volumes {raw_L:.1f} L < target {tgt_L:.1f} L — "
-                            "adjust LZLL/LALL/LAL setpoints to widen the LDV zone"
-                        )
-                    if not ldv["target_sf_ok"]:
-                        _msgs.append(
-                            f"NLL inventory {inv_L:.1f} L < {tgt_sf_L:.1f} L (target × SF) — "
-                            "increase vessel size or raise NLL"
-                        )
-                    st.error("Target LDV not met: " + "; ".join(_msgs) + ".", icon="🚫")
-
-            # ── Inventory check (level-based LDV vs NLL) ──────────────────────
-            _inv_surplus = ldv["nll_inv_m3"] - ldv["ldv_total_m3"]
-            if ldv["ok"]:
-                st.success(
-                    f"NLL inventory check passed — "
-                    f"**{ldv['nll_inv_m3']*1000:.1f} L** ≥ LDV (×SF) **{ldv['ldv_total_m3']*1000:.1f} L** "
-                    f"(surplus: **{_inv_surplus*1000:.1f} L**).",
-                    icon="✅",
-                )
-            else:
-                st.error(
-                    f"NLL inventory check failed — "
-                    f"**{ldv['nll_inv_m3']*1000:.1f} L** < LDV (×SF) **{ldv['ldv_total_m3']*1000:.1f} L** "
-                    f"(shortfall: **{-_inv_surplus*1000:.1f} L**). "
-                    "Increase vessel size, raise NLL, lower LZLL, or reduce downstream equipment empty volume.",
-                    icon="🚫",
-                )
+    # ── Internals mechanical loads ────────────────────────────────────────────
+    with st.expander("**Internals — mechanical loads (fabrication)**", expanded=False):
+        if _int_loads is None:
+            st.info("Enable LDV **and** baffle plates to calculate structural loads on internals.")
+        else:
+            il = _int_loads
             st.caption(
-                f"Available NLL inventory (VB+{ldv['eff_vb_mm']:.0f} mm → NLL {ldv['nll_mm']:.0f} mm, "
-                f"full vessel incl. endcaps): **{ldv['nll_inv_m3']*1000:.1f} L**"
+                f"LDV surge scenario: **{il['V_ldv_m3']*1000:.1f} L** floods into vessel "
+                f"in **{il['t_flood_s']:.0f} s**  →  "
+                f"Q = {il['Q_ldv_per_inlet_m3s']*1000:.2f} L/s per inlet.  "
+                f"Pure liquid (ρ = {rho_liq:.0f} kg/m³)."
             )
+            st.markdown("**Inlet device** (per inlet)")
+            _ic1, _ic2, _ic3 = st.columns(3)
+            _ic1.metric("Surge velocity",
+                        f"{il['v_ldv_ms']:.2f} m/s",
+                        help=f"LDV flow through nozzle bore "
+                             f"(DN{il['nozzle_dn']}, ID = {il['nz_id_mm']:.0f} mm, "
+                             f"A = {il['A_nozzle_m2']*1e4:.1f} cm²)")
+            _ic2.metric("Impact force (unfactored)",
+                        f"{il['F_impact_N']:,.0f} N",
+                        help="F = ρ_liq × v² × A_nozzle  (momentum flux, first principles)")
+            _ic3.metric(f"Design force  (SF {il['SF_inlet']:.0f})",
+                        f"{il['F_inlet_design_N']:,.0f} N",
+                        help="Applied to inlet device attachment welds / support brackets.")
+            st.caption(
+                f"Basis: LDV startup surge, pure liquid at gas-side nozzle. "
+                f"SF = {il['SF_inlet']:.0f} for impulsive / slug flow. "
+                f"API RP 14E gives the ρv² quantity; F = ρv² × A is the direct extension."
+            )
+
+            st.markdown("**Baffle plate** (per baffle, continuous fillet weld to shell)")
+            _bc1, _bc2, _bc3 = st.columns(3)
+            _bc1.metric("Surge ΔP",
+                        f"{il['dP_surge_Pa']:,.0f} Pa",
+                        help=f"ΔP = (1/Cd²) × (ρ_liq/2) × v_hole²  "
+                             f"(Cd = {_CD_DISP:.2f}, v_hole = {il['v_hole_ldv_ms']:.3f} m/s)")
+            _bc2.metric(f"Design force  (SF {il['SF_baffle']:.0f})",
+                        f"{il['F_baffle_design_N']:,.0f} N",
+                        help=f"Unfactored: {il['F_baffle_surge_N']:,.0f} N  "
+                             f"(baffle area {il['A_baffle_m2']:.3f} m²)  ×  SF {il['SF_baffle']:.0f}")
+            _bc3.metric("Gas ΔP (operating, ref.)",
+                        f"{il['dP_gas_op_Pa']:.1f} Pa",
+                        help="Steady-state gas flowing through open baffle area — informational only.")
+            _bw1, _bw2 = st.columns(2)
+            _bw1.metric("Min. plate thickness",
+                        f"{il['t_baffle_design_mm']:.1f} mm",
+                        help=f"Clamped circular plate: t = R × √(3q / 4f_d).  "
+                             f"Calculated {il['t_baffle_min_mm']:.1f} mm; "
+                             f"API 12J minimum 6 mm governs if larger.")
+            _bw2.metric("Fillet weld throat",
+                        f"{il['a_weld_design_mm']:.1f} mm",
+                        help=f"τ_allow = 0.4 × f_y = 0.4 × {il['fy_MPa']:.0f} = "
+                             f"{il['tau_allow_Pa']/1e6:.0f} MPa.  "
+                             f"Weld perimeter = {il['L_weld_m']*1000:.0f} mm.  "
+                             f"Calculated {il['a_weld_req_mm']:.1f} mm; 3 mm minimum.")
+            st.caption(
+                f"Basis: perforated plate ΔP (Cd = 0.61), clamped plate bending, "
+                f"weld τ_allow = 0.4·fy (EN 1993-1-8 / AWS D1.1).  "
+                f"f_d = {il['fd_MPa']:.0f} MPa, f_y = {il['fy_MPa']:.0f} MPa.  "
+                f"SF = {il['SF_baffle']:.0f}.  "
+                "No standard prescribes this method — verify per project structural code."
+            )
+
+    # ── Weight estimate ───────────────────────────────────────────────────────
+    with st.expander("**Weight estimate**", expanded=True):
+        wt = _weight_result
+        _wc1, _wc2, _wc3 = st.columns(3)
+        _wc1.metric("Dry weight",
+                    f"{wt['m_dry_kg']:,.0f} kg",
+                    f"{wt['m_dry_kg']/1000:.2f} t",
+                    help="Shell + heads + nozzles + saddles + internals + 5 % misc allowance.")
+        _wc2.metric("Operating weight",
+                    f"{wt['m_operating_kg']:,.0f} kg",
+                    f"{wt['m_operating_kg']/1000:.2f} t",
+                    help=f"Dry + liquid at NLL ({wt['V_nll_m3']*1000:.0f} L "
+                         f"× {wt['rho_liq_kgm3']:.0f} kg/m³ = {wt['m_liquid_op_kg']:,.0f} kg).")
+        _wc3.metric("Hydrotest weight",
+                    f"{wt['m_hydrotest_kg']:,.0f} kg",
+                    f"{wt['m_hydrotest_kg']/1000:.2f} t",
+                    help=f"Dry + water fill ({wt['V_total_m3']*1000:.0f} L "
+                         f"× 1 000 kg/m³ = {wt['m_water_ht_kg']:,.0f} kg).")
+
+        st.divider()
+        # Breakdown table
+        _total = wt["m_dry_kg"]
+        def _wpct(m):
+            return f"{m / max(_total, 1) * 100:.1f} %"
+        _brows = [
+            {"Component": "Shell",              "Mass (kg)": f"{wt['m_shell_kg']:,.0f}",   "% of dry": _wpct(wt['m_shell_kg'])},
+            {"Component": f"Heads × 2  ({_head_label})",
+                                                 "Mass (kg)": f"{wt['m_heads_kg']:,.0f}",   "% of dry": _wpct(wt['m_heads_kg'])},
+            {"Component": f"Nozzles ({len(wt['nozzle_detail'])})",
+                                                 "Mass (kg)": f"{wt['m_nozzles_kg']:,.0f}", "% of dry": _wpct(wt['m_nozzles_kg'])},
+            {"Component": "Saddles × 2",         "Mass (kg)": f"{wt['m_saddles_kg']:,.0f}", "% of dry": _wpct(wt['m_saddles_kg'])},
+            {"Component": "Internals",           "Mass (kg)": f"{wt['m_internals_kg']:,.0f}","% of dry": _wpct(wt['m_internals_kg'])},
+            {"Component": f"Misc +{wt['misc_factor']*100:.0f} %",
+                                                 "Mass (kg)": f"{wt['m_misc_kg']:,.0f}",    "% of dry": f"{wt['misc_factor']*100:.0f} %"},
+            {"Component": "**Dry total**",       "Mass (kg)": f"**{wt['m_dry_kg']:,.0f}**", "% of dry": "100 %"},
+        ]
+        st.dataframe(pd.DataFrame(_brows), hide_index=True, use_container_width=True)
+
+        if wt["m_internals_kg"] > 0:
+            _ic = []
+            if wt["m_baffles_kg"] > 0:
+                _ic.append(f"Baffles {wt['m_baffles_kg']:.0f} kg")
+            if wt["m_meshpad_kg"] > 0:
+                _ic.append(f"Mesh pad {wt['m_meshpad_kg']:.0f} kg")
+            if wt["m_inlet_dev_kg"] > 0:
+                _ic.append(f"Inlet device(s) {wt['m_inlet_dev_kg']:.0f} kg")
+            if wt["m_vortex_brk_kg"] > 0:
+                _ic.append(f"Vortex breaker {wt['m_vortex_brk_kg']:.0f} kg")
+            st.caption("Internals: " + "  ·  ".join(_ic))
+
+        st.caption(
+            "Estimate only — ±15–20 % accuracy. "
+            "Shell and heads use nominal wall thickness. "
+            "Nozzle weight = pipe stub (300 mm projection) + one weld-neck flange per nozzle. "
+            "Saddle weight based on plate area estimate. "
+            "Misc (+5 %) covers welds, paint, support clips and reinf. pads."
+        )
 
     # ── Volume table ──────────────────────────────────────────────────────────
     vol_res_disp = vessel_volumes(
@@ -3258,6 +3387,8 @@ def main():
             t_surge_req_min=t_surge_req,
             include_surge_check=include_surge_check,
             ldv_result=_ldv_result,
+            int_loads_result=_int_loads,
+            weight_result=_weight_result,
             Z_gas=Z_gas,
             lining_spec=lining_spec,
             head_type=head_type,
@@ -3304,6 +3435,8 @@ def main():
             t_surge_req_min=t_surge_req,
             include_surge_check=include_surge_check,
             ldv_result=_ldv_result,
+            int_loads_result=_int_loads,
+            weight_result=_weight_result,
             Z_gas=Z_gas,
             lining_spec=lining_spec,
             head_type=head_type,

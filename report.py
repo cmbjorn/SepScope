@@ -388,6 +388,7 @@ def _endcap_analysis_html(
     t_head_nom: float,
     code_key: str,
     h_head: float = 0.0,
+    lzhh_mm: float = 0.0,
 ) -> str:
     """
     Full endcap analysis section: face-on SVG drawings, summary table,
@@ -511,6 +512,38 @@ def _endcap_analysis_html(
                 f'{abs(surplus):,.0f} mm²</span>'
                 f'</p>'
             )
+
+        # Inlet positioning (inlet nozzles only)
+        if nz.get("service") == "Inlet" and lzhh_mm >= 0:
+            _nz_IR_h   = (nres.nozzle_OD_mm - 2.0 * nres.nozzle_t_mm) / 2.0
+            _nz_bot_h  = (Di - nres.d_from_top_mm) - _nz_IR_h
+            _top_clr_h = nres.edge_to_shell_mm          # OD top → vessel crown ID
+            _lzhh_clr  = _nz_bot_h - lzhh_mm            # LZHH → inlet device bottom
+            _MIN_CLR   = 150.0
+            html.append('<div class="sub-sec" style="margin-top:5px">Inlet positioning</div>')
+            html.append('<div class="metrics">')
+            _top_flag = " ✓" if _top_clr_h >= min_weld else f" ✗ &lt; {min_weld:.0f} mm"
+            html.append(f'<span class="metric"><b>Nozzle OD top → vessel crown ID:</b> '
+                        f'{_top_clr_h:.0f} mm{_top_flag}</span>')
+            _lzhh_cls  = "ok"   if _lzhh_clr >= _MIN_CLR else "fail"
+            _lzhh_flag = (" ✓ ≥ 150 mm"          if _lzhh_clr >= _MIN_CLR else
+                          " ✗ submerged at LZHH"  if _lzhh_clr < 0 else
+                          f" ⚠ only {_lzhh_clr:.0f} mm — min 150 mm")
+            html.append(f'<span class="metric"><b>LZHH → inlet device bottom:</b> '
+                        f'<span class="{_lzhh_cls}">{_lzhh_clr:.0f} mm{_lzhh_flag}</span></span>')
+            html.append(f'<span class="metric"><b>Inlet bore bottom from vessel bottom:</b> '
+                        f'{_nz_bot_h:.0f} mm</span>')
+            html.append('</div>')
+            if _lzhh_clr < 0:
+                html.append(
+                    f'<div class="impl-err">🚫 Inlet device submerged at LZHH by '
+                    f'{-_lzhh_clr:.0f} mm — raise inlet nozzle or lower LZHH.</div>')
+            elif _lzhh_clr < _MIN_CLR:
+                html.append(
+                    f'<div class="impl-warn">⚠ Only {_lzhh_clr:.0f} mm clearance from LZHH to '
+                    f'inlet device bottom — minimum 150 mm recommended. Inlet device may be '
+                    f'intermittently submerged at high-high level, causing backflow and poor '
+                    f'distribution.</div>')
 
         # Engineering implications
         impl: list[tuple[str, str]] = []
@@ -653,12 +686,12 @@ def _sketch_svg(
     nll_mm: float,
     saddle_a_mm: float = 0.0,
 ) -> str:
-    from engines.nozzle_geometry import NOZZLE_OD
+    from engines.nozzle_geometry import NOZZLE_OD, NOZZLE_WALL_T
 
     # Canvas: fix width at 860px, height proportional to vessel
     SVG_W = 860
     # Visible range in vessel coords (x: -margin to L+h+margin, y: -margin to Di+margin)
-    MX = max(h_head * 1.5, 80.0)   # x margin
+    MX = max(h_head * 1.5, 400.0)  # x margin — enough for large nozzle flanges
     MY = max(Di * 0.45, 70.0)       # y margin above/below vessel
     real_w = L_shell + 2 * h_head + 2 * MX
     real_h = Di + 2 * MY
@@ -788,49 +821,129 @@ def _sketch_svg(
         "Inlet": "#0891b2", "Gas outlet": "#059669", "Liquid outlet": "#2563eb",
         "PSV": "#dc2626", "Manway": "#7c3aed",
     }
+
+    def _light(h6):
+        r,g,b = int(h6[1:3],16),int(h6[3:5],16),int(h6[5:7],16)
+        return f"#{int(r*.12+255*.88):02x}{int(g*.12+255*.88):02x}{int(b*.12+255*.88):02x}"
+
+    def _mid(h6):
+        r,g,b = int(h6[1:3],16),int(h6[3:5],16),int(h6[5:7],16)
+        return f"#{int(r*.38+255*.62):02x}{int(g*.38+255*.62):02x}{int(b*.38+255*.62):02x}"
+
     for nz, nres, rres, _fok, _pat in nozzle_results:
         dn  = nz["dn"]
         loc = nz["loc"]
         svc = nz.get("service", "")
         nc  = _svc_colors.get(svc, "#475569")
-        OD  = NOZZLE_OD.get(dn, dn * 1.05)
-        disp_r = OD / 2                    # true OD radius — circle() applies sc scaling
-        stub   = max(disp_r * 1.2, 20.0)  # ~1.2 × radius projection outside vessel
+        fl  = _light(nc)
+        ff  = _mid(nc)
+
+        OD     = NOZZLE_OD.get(dn, dn * 1.05)
+        BV     = OD / 2 * 0.70   # visual bore radius (70 % of pipe radius)
+
+        stub     = max(OD * 2.2, 55.0)
+        flange_r = OD * 0.70
+        flange_t = max(OD * 0.14, 10.0)
+        pipe_h   = stub - flange_t
+        boss_ext = OD * 0.10
+        boss_t   = max(OD * 0.09, 7.0)
 
         if loc == "Left head" and nres is not None:
-            ny = Di - nres.d_from_top_mm
-            line(-h_head - stub, ny, -h_head, ny, c=nc, w=1.5)
-            circle(-h_head - stub, ny, disp_r, fill="#dbeafe", stroke=nc, sw=1.5)
-            text(-h_head - stub - disp_r - 3, ny + 2, nz["tag"],
+            ny   = Di - nres.d_from_top_mm
+            nz_x = -nres.z_on_head_mm   # actual surface point on the left head
+            # Boss collar
+            rect(nz_x - boss_t, ny - OD/2 - boss_ext,
+                 boss_t, OD + 2*boss_ext, fill=ff, stroke=nc, sw=1.2)
+            # Pipe body (colored fill)
+            rect(nz_x - pipe_h, ny - OD/2,
+                 pipe_h - boss_t, OD, fill=fl, stroke=nc, sw=1.5)
+            # Bore through pipe (white, centered at ny)
+            rect(nz_x - pipe_h, ny - BV,
+                 pipe_h - boss_t, BV*2, fill="white", stroke=nc, sw=0.8)
+            # Flange plate
+            rect(nz_x - stub, ny - flange_r,
+                 flange_t, flange_r*2, fill=ff, stroke=nc, sw=1.5)
+            # Bore through flange
+            rect(nz_x - stub, ny - BV,
+                 flange_t, BV*2, fill="white", stroke=nc, sw=0.8)
+            text(nz_x - stub - 3, ny + 2, nz["tag"],
                  anchor="end", size=7, color=nc, bold=True)
 
         elif loc == "Right head" and nres is not None:
-            ny = Di - nres.d_from_top_mm
-            line(L_shell + h_head, ny, L_shell + h_head + stub, ny, c=nc, w=1.5)
-            circle(L_shell + h_head + stub, ny, disp_r, fill="#dbeafe", stroke=nc, sw=1.5)
-            text(L_shell + h_head + stub + disp_r + 3, ny + 2, nz["tag"],
+            ny   = Di - nres.d_from_top_mm
+            nz_x = L_shell + nres.z_on_head_mm   # actual surface point on the right head
+            # Boss collar
+            rect(nz_x, ny - OD/2 - boss_ext,
+                 boss_t, OD + 2*boss_ext, fill=ff, stroke=nc, sw=1.2)
+            # Pipe body (colored fill)
+            rect(nz_x + boss_t, ny - OD/2,
+                 pipe_h - boss_t, OD, fill=fl, stroke=nc, sw=1.5)
+            # Bore through pipe (white, centered at ny)
+            rect(nz_x + boss_t, ny - BV,
+                 pipe_h - boss_t, BV*2, fill="white", stroke=nc, sw=0.8)
+            # Flange plate
+            rect(nz_x + pipe_h, ny - flange_r,
+                 flange_t, flange_r*2, fill=ff, stroke=nc, sw=1.5)
+            # Bore through flange
+            rect(nz_x + pipe_h, ny - BV,
+                 flange_t, BV*2, fill="white", stroke=nc, sw=0.8)
+            text(nz_x + stub + 3, ny + 2, nz["tag"],
                  anchor="start", size=7, color=nc, bold=True)
 
         elif loc == "Shell — top":
             nx = nz.get("axial_mm", L_shell / 2)
-            line(nx, Di, nx, Di + stub, c=nc, w=1.5)
-            circle(nx, Di + stub, disp_r, fill="#dbeafe", stroke=nc, sw=1.5)
-            text(nx, Di + stub + disp_r + 10, nz["tag"],
+            # Boss collar
+            rect(nx - OD/2 - boss_ext, Di,
+                 OD + 2*boss_ext, boss_t, fill=ff, stroke=nc, sw=1.2)
+            # Pipe body (colored fill)
+            rect(nx - OD/2, Di + boss_t,
+                 OD, pipe_h - boss_t, fill=fl, stroke=nc, sw=1.5)
+            # Bore through pipe (white)
+            rect(nx - BV, Di + boss_t,
+                 BV*2, pipe_h - boss_t, fill="white", stroke=nc, sw=0.8)
+            # Flange plate
+            rect(nx - flange_r, Di + pipe_h,
+                 flange_r*2, flange_t, fill=ff, stroke=nc, sw=1.5)
+            # Bore through flange
+            rect(nx - BV, Di + pipe_h,
+                 BV*2, flange_t, fill="white", stroke=nc, sw=0.8)
+            text(nx, Di + stub + 10, nz["tag"],
                  anchor="middle", size=7, color=nc, bold=True)
 
         elif loc == "Shell — bottom":
             nx = nz.get("axial_mm", L_shell / 2)
-            line(nx, 0, nx, -stub, c=nc, w=1.5)
-            circle(nx, -stub, disp_r, fill="#dbeafe", stroke=nc, sw=1.5)
-            text(nx, -stub - disp_r - 4, nz["tag"],
+            # Boss collar
+            rect(nx - OD/2 - boss_ext, -boss_t,
+                 OD + 2*boss_ext, boss_t, fill=ff, stroke=nc, sw=1.2)
+            # Pipe body (colored fill)
+            rect(nx - OD/2, -(pipe_h),
+                 OD, pipe_h - boss_t, fill=fl, stroke=nc, sw=1.5)
+            # Bore through pipe (white)
+            rect(nx - BV, -(pipe_h),
+                 BV*2, pipe_h - boss_t, fill="white", stroke=nc, sw=0.8)
+            # Flange plate
+            rect(nx - flange_r, -(pipe_h + flange_t),
+                 flange_r*2, flange_t, fill=ff, stroke=nc, sw=1.5)
+            # Bore through flange
+            rect(nx - BV, -(pipe_h + flange_t),
+                 BV*2, flange_t, fill="white", stroke=nc, sw=0.8)
+            text(nx, -(stub + 10), nz["tag"],
                  anchor="middle", size=7, color=nc, bold=True)
 
-        else:  # Shell side — small circle on centreline
-            nx = nz.get("axial_mm", L_shell / 2)
-            cr = OD / 2                    # true OD radius (end-on view)
-            circle(nx, Di/2, cr, fill="#dbeafe", stroke=nc, sw=1.2)
-            text(nx, Di/2 + cr + 9, nz["tag"],
-                 anchor="middle", size=6.5, color=nc)
+        else:  # Shell — side: end-on view → flange ring + pipe ring
+            nx       = nz.get("axial_mm", L_shell / 2)
+            ny_s     = Di / 2
+            fl_r_ss  = OD * 0.70       # flange outer radius (1.4 × pipe radius)
+            bore_vis = OD / 2 * 0.70   # visual bore radius (70 % of pipe radius)
+            # Flange outer ring: no fill, just an outline circle
+            out.append(f'<circle cx="{px(nx):.1f}" cy="{py(ny_s):.1f}" '
+                       f'r="{fl_r_ss*sc:.1f}" fill="none" stroke="{nc}" stroke-width="1.8"/>')
+            # Pipe OD disk: light fill, shows pipe wall ring between flange and pipe
+            circle(nx, ny_s, OD/2,    fill=fl,      stroke=nc,  sw=1.5)
+            # Bore disk: white, shows pipe wall between bore and pipe OD
+            circle(nx, ny_s, bore_vis, fill="white",  stroke=nc,  sw=0.8)
+            text(nx, ny_s + fl_r_ss + 10, nz["tag"],
+                 anchor="middle", size=6.5, color=nc, bold=True)
 
     # ── Dimension: T-T ────────────────────────────────────────────────────
     y_dim = -MY * 0.55
@@ -896,6 +1009,8 @@ def generate_datasheet_html(
     t_surge_req_min: float = 3.0,
     include_surge_check: bool = True,
     ldv_result: dict | None = None,
+    int_loads_result: dict | None = None,
+    weight_result: dict | None = None,
     Z_gas: float = 1.0,
     lining_spec: dict | None = None,
     # Head geometry — needed for endcap drawings and analysis
@@ -1258,41 +1373,29 @@ def generate_datasheet_html(
     # LDV rows
     if ldv_result is not None:
         ldv = ldv_result
+        _has_target = ldv.get("target_m3") is not None
         sizing_rows += [
-            _row("LDV — Segment A (VB → LZLL, raw)",
-                 f"{ldv['seg_a_raw_m3']*1000:.1f}  L  ({ldv['seg_a_raw_m3']:.4f} m³)",
-                 f"VB = {ldv['eff_vb_mm']:.0f} mm  →  LZLL = {ldv['lzll_mm']:.0f} mm",
-                 None),
-            _row(f"LDV — Segment A × SF {ldv['sf']:.2f}",
+            _row("LDV — Segment A (VB → LZLL)",
                  f"{ldv['seg_a_m3']*1000:.1f}  L  ({ldv['seg_a_m3']:.4f} m³)",
-                 "Safety factor applied",
-                 None),
-            _row("LDV — Segment B (LALL → LAL)",
+                 f"VB = {ldv['eff_vb_mm']:.0f} mm  →  LZLL = {ldv['lzll_mm']:.0f} mm",
+                 ldv.get("seg_a_ok") if _has_target else None),
+            _row("LDV — Segment B (LZLL → LALL)",
                  f"{ldv['seg_b_m3']*1000:.1f}  L  ({ldv['seg_b_m3']:.4f} m³)",
-                 f"LALL = {ldv['lall_mm']:.0f} mm  →  LAL = {ldv['lal_mm']:.0f} mm",
-                 None),
-            _row("LDV Total  (A×SF + B)  vs NLL inventory",
-                 f"{ldv['ldv_total_m3']*1000:.1f}  L",
-                 f"≤ NLL inventory {ldv['nll_inv_m3']*1000:.1f}  L  (VB → NLL, incl. heads)",
-                 ldv["ok"]),
+                 f"LZLL = {ldv['lzll_mm']:.0f} mm  →  LALL = {ldv['lall_mm']:.0f} mm",
+                 ldv.get("seg_b_ok") if _has_target else None),
         ]
         if ldv.get("target_m3") is not None:
-            tgt_L    = ldv["target_m3"] * 1000
-            raw_L    = ldv.get("ldv_raw_m3", ldv["seg_a_raw_m3"] + ldv["seg_b_m3"]) * 1000
-            tgt_sf_L = tgt_L * ldv["sf"]
+            tgt_L = ldv["target_m3"] * 1000
+            tgt_sf_L = ldv.get("ldv_required_m3", 0.0) * 1000
             sizing_rows += [
                 _row("LDV Target  (before SF)  — downstream equipment volume",
                      f"{tgt_L:.1f}  L  (input)",
                      "User-specified required LDV",
                      None),
-                _row("Level volumes (Seg A raw + Seg B)  vs target",
-                     f"{raw_L:.1f}  L",
-                     f"≥ {tgt_L:.1f}  L  (target before SF)",
-                     ldv.get("target_ok")),
-                _row(f"NLL inventory  vs  target × SF {ldv['sf']:.2f}",
-                     f"{ldv['nll_inv_m3']*1000:.1f}  L",
-                     f"≥ {tgt_sf_L:.1f}  L  (target × SF)",
-                     ldv.get("target_sf_ok")),
+                _row(f"LDV Required  (Target × SF {ldv['sf']:.2f})",
+                     f"{tgt_sf_L:.1f}  L",
+                     "Requirement for both segment checks",
+                     None),
             ]
     if inlet_nzs:
         _nz0 = inlet_nzs[0][0]
@@ -1319,6 +1422,107 @@ def generate_datasheet_html(
 
     sec_d = _sec("D", "Separator Sizing  (API 12J screening)",
                  _dt(["Criterion", "Actual", "Limit", "Status"], sizing_rows))
+
+    # ── D.1  INTERNALS MECHANICAL LOADS ──────────────────────────────────────
+    sec_d1 = ""
+    if int_loads_result is not None:
+        il = int_loads_result
+        _inlet_kv = _kv(
+            ("Scenario",
+             f"LDV surge: {il['V_ldv_m3']*1000:.1f} L in {il['t_flood_s']:.0f} s  "
+             f"→  {il['Q_ldv_per_inlet_m3s']*1000:.2f} L/s per inlet"),
+            ("Nozzle",
+             f"DN{il['nozzle_dn']}  ·  ID {il['nz_id_mm']:.0f} mm  "
+             f"·  A = {il['A_nozzle_m2']*1e4:.1f} cm²"),
+            ("Surge velocity",      f"{il['v_ldv_ms']:.2f}  m/s"),
+            ("Impact force",        f"{il['F_impact_N']:,.0f}  N  (unfactored)"),
+            (f"Design force  (SF {il['SF_inlet']:.0f})",
+             f"<b>{il['F_inlet_design_N']:,.0f}  N</b>"),
+            ("Basis",
+             "F = ρ_liq × v² × A_nozzle  (momentum flux, first principles)  "
+             "—  API RP 14E provides ρv²; force = ρv² × A is the direct extension."),
+        )
+        _baffle_kv = _kv(
+            ("Scenario",
+             f"Same LDV surge, liquid through baffle holes  "
+             f"(φ = {il['phi']*100:.0f} %, Cd = 0.61)"),
+            ("Hole velocity",       f"{il['v_hole_ldv_ms']:.3f}  m/s"),
+            ("Surge ΔP",            f"{il['dP_surge_Pa']:,.0f}  Pa"),
+            ("Surge force",         f"{il['F_baffle_surge_N']:,.0f}  N  (unfactored)"),
+            (f"Design force  (SF {il['SF_baffle']:.0f})",
+             f"<b>{il['F_baffle_design_N']:,.0f}  N</b>"),
+            ("Gas ΔP (operating, ref.)",
+             f"{il['dP_gas_op_Pa']:.1f}  Pa"),
+            ("Min. plate thickness",
+             f"<b>{il['t_baffle_design_mm']:.1f}  mm</b>  "
+             f"(calc. {il['t_baffle_min_mm']:.1f} mm; API 12J min 6 mm)"),
+            ("Fillet weld throat",
+             f"<b>{il['a_weld_design_mm']:.1f}  mm</b>  "
+             f"(calc. {il['a_weld_req_mm']:.1f} mm; min 3 mm)  "
+             f"·  perimeter {il['L_weld_m']*1000:.0f} mm"),
+            ("Material f_d / f_y",
+             f"{il['fd_MPa']:.0f} MPa  /  {il['fy_MPa']:.0f} MPa  "
+             f"·  τ_allow = 0.4 × f_y = {il['tau_allow_Pa']/1e6:.0f} MPa  "
+             "(EN 1993-1-8 / AWS D1.1)"),
+        )
+        _note = (
+            '<p style="font-size:0.82em;color:#64748b;margin-top:6px">'
+            'Basis: LDV startup surge (t_flood = '
+            f'{il["t_flood_s"]:.0f} s), pure liquid density. '
+            'Inlet device: momentum flux. Baffle: perforated-plate ΔP. '
+            'Plate: clamped circular plate. Weld: τ = 0.4·f_y. '
+            'No standard prescribes this method — verify per project structural code.</p>'
+        )
+        sec_d1 = _sec(
+            "D.1",
+            "Internals — Mechanical Loads  (LDV Startup Surge)",
+            f'<div style="display:flex;gap:16px;flex-wrap:wrap">'
+            f'{_panel("Inlet Device (per inlet)", _inlet_kv)}'
+            f'{_panel("Baffle Plate (per baffle, full circumferential weld)", _baffle_kv)}'
+            f'</div>'
+            f'{_note}',
+        )
+
+    # ── D.2  WEIGHT ESTIMATE ─────────────────────────────────────────────────
+    sec_d2 = ""
+    if weight_result is not None:
+        wt = weight_result
+        _total = max(wt["m_dry_kg"], 1.0)
+        def _wpct(m):
+            return f"{m / _total * 100:.1f} %"
+        _wt_summary = _kv(
+            ("Dry weight",       f"<b>{wt['m_dry_kg']:,.0f}  kg  ({wt['m_dry_kg']/1000:.2f} t)</b>"),
+            ("Operating weight", f"<b>{wt['m_operating_kg']:,.0f}  kg  ({wt['m_operating_kg']/1000:.2f} t)</b>"),
+            ("Hydrotest weight", f"<b>{wt['m_hydrotest_kg']:,.0f}  kg  ({wt['m_hydrotest_kg']/1000:.2f} t)</b>"),
+        )
+        _wt_breakdown = _dt(
+            ["Component", "Mass (kg)", "% of dry"],
+            [
+                ["Shell",            f"{wt['m_shell_kg']:,.0f}",    _wpct(wt['m_shell_kg'])],
+                [f"Heads × 2",       f"{wt['m_heads_kg']:,.0f}",    _wpct(wt['m_heads_kg'])],
+                [f"Nozzles ({len(wt['nozzle_detail'])})",
+                                     f"{wt['m_nozzles_kg']:,.0f}",  _wpct(wt['m_nozzles_kg'])],
+                ["Saddles × 2",      f"{wt['m_saddles_kg']:,.0f}",  _wpct(wt['m_saddles_kg'])],
+                ["Internals",        f"{wt['m_internals_kg']:,.0f}",_wpct(wt['m_internals_kg'])],
+                [f"Misc (+{wt['misc_factor']*100:.0f} %)",
+                                     f"{wt['m_misc_kg']:,.0f}",     f"{wt['misc_factor']*100:.0f} %"],
+                ["<b>Dry total</b>", f"<b>{wt['m_dry_kg']:,.0f}</b>", "<b>100 %</b>"],
+            ],
+        )
+        _wt_note = (
+            '<p style="font-size:0.82em;color:#64748b;margin-top:6px">'
+            "Estimate ±15–20 %. Shell and heads use nominal wall thickness. "
+            "Nozzles = pipe stub (300 mm) + one weld-neck flange each. "
+            "Saddles = plate-area estimate. Misc +5 % covers welds, paint, clips.</p>"
+        )
+        sec_d2 = _sec(
+            "D.2", "Weight Estimate",
+            f'<div style="display:flex;gap:16px;flex-wrap:wrap">'
+            f'{_panel("Summary", _wt_summary)}'
+            f'{_panel("Dry Weight Breakdown", _wt_breakdown)}'
+            f'</div>'
+            f'{_wt_note}',
+        )
 
     # ── E  LIQUID LEVELS ──────────────────────────────────────────────────────
     _desc = {
@@ -1405,13 +1609,16 @@ def generate_datasheet_html(
         note_parts = []
         if nres is not None:
             note_parts.append(f"Zone: {nres.zone.replace('_', ' ')}")
-            if nz.get("service") == "Inlet":
-                nz_IR  = (OD - 2*t) / 2.0
-                nz_bot = (Di - nres.d_from_top_mm) - nz_IR
-                dist   = lzhh_mm - nz_bot
-                note_parts.append(
-                    f"inlet bottom {'submerged' if dist > 0 else 'clear'} at LZHH ({dist:+.0f} mm)"
-                )
+            if nz.get("loc") in ("Left head", "Right head"):
+                nz_IR_g  = (OD - 2*t) / 2.0
+                nz_bot_g = (Di - nres.d_from_top_mm) - nz_IR_g
+                top_clr_g  = nres.edge_to_shell_mm           # OD top → crown ID
+                lzhh_clr_g = nz_bot_g - lzhh_mm              # LZHH → inlet device bottom
+                note_parts.append(f"OD top→crown: {top_clr_g:.0f} mm")
+                if nz.get("service") == "Inlet":
+                    _flag_g = ("✓" if lzhh_clr_g >= 150
+                               else ("✗ sub." if lzhh_clr_g < 0 else "⚠ &lt;150mm"))
+                    note_parts.append(f"LZHH→inlet bot: {lzhh_clr_g:.0f} mm {_flag_g}")
         notes = "  |  ".join(note_parts)
 
         nz_rows.append([
@@ -1487,6 +1694,7 @@ def generate_datasheet_html(
             t_head_nom=head_res.t_nom_mm,
             code_key=code_key,
             h_head=h_head,
+            lzhh_mm=lzhh_mm,
         )
 
     # ── FOOTER ────────────────────────────────────────────────────────────────
@@ -1501,7 +1709,7 @@ def generate_datasheet_html(
 
     body = (
         header_html + banner + sketch_html
-        + sec_a + sec_b + sec_c + sec_d
+        + sec_a + sec_b + sec_c + sec_d + sec_d1 + sec_d2
         + sec_e + sec_f + sec_g + sec_g1 + sec_h
         + footer
     )
