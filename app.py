@@ -27,13 +27,13 @@ _CD_DISP = 0.61   # baffle hole discharge coefficient (displayed in UI captions)
 
 # Level tag visual styles: (line-colour, dash-style, line-width)
 _LEVEL_STYLE: dict[str, tuple[str, str, float]] = {
-    "LZLL": ("#4b5563", "dot",   1.5),
-    "LALL": ("#dc2626", "dash",  1.5),
-    "LAL":  ("#f97316", "dash",  1.5),
-    "NLL":  ("#2563eb", "solid", 2.2),
-    "LAH":  ("#f97316", "dash",  1.5),
-    "LAHH": ("#dc2626", "dash",  1.5),
-    "LZHH": ("#4b5563", "dot",   1.5),
+    "LZLL": ("#6a7a88", "dot",   1.5),
+    "LALL": ("#b52b2b", "dash",  1.5),
+    "LAL":  ("#c07520", "dash",  1.5),
+    "NLL":  ("#3a6fa8", "solid", 2.2),
+    "LAH":  ("#c07520", "dash",  1.5),
+    "LAHH": ("#b52b2b", "dash",  1.5),
+    "LZHH": ("#6a7a88", "dot",   1.5),
 }
 
 _NOZZLE_SERVICES = [
@@ -272,29 +272,29 @@ def _vessel_figure(
             mx = _mirror if mirror else (lambda v: v)
             fig.add_trace(go.Scatter(
                 x=mx(crown_xs), y=crown_ys,
-                fill="toself", fillcolor="rgba(34,197,94,0.22)",
+                fill="toself", fillcolor="rgba(46,139,87,0.18)",
                 line=dict(color="rgba(0,0,0,0)", width=0),
                 name="Crown — nozzle permitted" if not mirror else None,
                 showlegend=not mirror, hoverinfo="skip",
             ))
             fig.add_trace(go.Scatter(
                 x=mx(knuck_xs), y=knuck_ys,
-                fill="toself", fillcolor="rgba(245,158,11,0.25)",
+                fill="toself", fillcolor="rgba(192,125,26,0.22)",
                 line=dict(color="rgba(0,0,0,0)", width=0),
                 name="Knuckle — non-standard placement" if not mirror else None,
                 showlegend=not mirror, hoverinfo="skip",
             ))
             bx = -z_cj if not mirror else L_shell + z_cj
             fig.add_shape(type="line", x0=bx, x1=bx, y0=-r_cj, y1=r_cj,
-                          line=dict(color="#16a34a", width=1.8, dash="dash"))
+                          line=dict(color="#2e8b57", width=1.8, dash="dash"))
             mid_c = -(h_head + z_cj) / 2 if not mirror else L_shell + (h_head + z_cj) / 2
             mid_k = -z_cj / 2            if not mirror else L_shell + z_cj / 2
             fig.add_annotation(x=mid_c, y=0, text="Crown",
-                               showarrow=False, font=dict(size=10, color="#15803d"),
+                               showarrow=False, font=dict(size=10, color="#1f7a4a"),
                                bgcolor="rgba(255,255,255,0.55)", borderpad=2)
             for sy in ((r_cj + R) / 2, -(r_cj + R) / 2):
                 fig.add_annotation(x=mid_k, y=sy, text="Knuckle",
-                                   showarrow=False, font=dict(size=9, color="#b45309"),
+                                   showarrow=False, font=dict(size=9, color="#9a6010"),
                                    bgcolor="rgba(255,255,255,0.55)", borderpad=2)
 
     elif head_type == HeadType.ELLIPSOIDAL:
@@ -326,29 +326,29 @@ def _vessel_figure(
             mx = _mirror if mirror else (lambda v: v)
             fig.add_trace(go.Scatter(
                 x=mx(crown_xs), y=crown_ys,
-                fill="toself", fillcolor="rgba(34,197,94,0.22)",
+                fill="toself", fillcolor="rgba(46,139,87,0.18)",
                 line=dict(color="rgba(0,0,0,0)", width=0),
                 name="Crown equiv. — nozzle permitted" if not mirror else None,
                 showlegend=not mirror, hoverinfo="skip",
             ))
             fig.add_trace(go.Scatter(
                 x=mx(peri_xs), y=peri_ys,
-                fill="toself", fillcolor="rgba(245,158,11,0.25)",
+                fill="toself", fillcolor="rgba(192,125,26,0.22)",
                 line=dict(color="rgba(0,0,0,0)", width=0),
                 name="Compressive-stress zone — detailed check needed" if not mirror else None,
                 showlegend=not mirror, hoverinfo="skip",
             ))
             bx = -z_rev if not mirror else L_shell + z_rev
             fig.add_shape(type="line", x0=bx, x1=bx, y0=-r_rev, y1=r_rev,
-                          line=dict(color="#16a34a", width=1.8, dash="dash"))
+                          line=dict(color="#2e8b57", width=1.8, dash="dash"))
             mid_c = -(b + z_rev) / 2 if not mirror else L_shell + (b + z_rev) / 2
             mid_p = -z_rev / 2        if not mirror else L_shell + z_rev / 2
             fig.add_annotation(x=mid_c, y=0, text="Crown",
-                               showarrow=False, font=dict(size=10, color="#15803d"),
+                               showarrow=False, font=dict(size=10, color="#1f7a4a"),
                                bgcolor="rgba(255,255,255,0.55)", borderpad=2)
             for sy in ((r_rev + R) / 2, -(r_rev + R) / 2):
                 fig.add_annotation(x=mid_p, y=sy, text="Compressive",
-                                   showarrow=False, font=dict(size=9, color="#b45309"),
+                                   showarrow=False, font=dict(size=9, color="#9a6010"),
                                    bgcolor="rgba(255,255,255,0.55)", borderpad=2)
 
     elif head_type != HeadType.FLAT:
@@ -358,7 +358,7 @@ def _vessel_figure(
             mx = _mirror if mirror else (lambda v: v)
             fig.add_trace(go.Scatter(
                 x=mx(full_xs), y=full_ys,
-                fill="toself", fillcolor="rgba(34,197,94,0.18)",
+                fill="toself", fillcolor="rgba(46,139,87,0.15)",
                 line=dict(color="rgba(0,0,0,0)", width=0),
                 name="Full head — nozzle permitted" if not mirror else None,
                 showlegend=not mirror, hoverinfo="skip",
@@ -372,24 +372,24 @@ def _vessel_figure(
             fig.add_shape(type="line",
                           x0=-h_head, x1=excl_reach,
                           y0=sign * r_weld_boundary, y1=sign * r_weld_boundary,
-                          line=dict(color="rgba(220,38,38,0.55)", width=1.2, dash="dot"))
+                          line=dict(color="rgba(181,43,43,0.50)", width=1.2, dash="dot"))
             # Right head side (mirrored)
             fig.add_shape(type="line",
                           x0=L_shell + h_head, x1=L_shell - excl_reach,
                           y0=sign * r_weld_boundary, y1=sign * r_weld_boundary,
-                          line=dict(color="rgba(220,38,38,0.55)", width=1.2, dash="dot"))
+                          line=dict(color="rgba(181,43,43,0.50)", width=1.2, dash="dot"))
         fig.add_annotation(
             x=-h_head * 0.5, y=r_weld_boundary + 12,
             text=f"Weld excl. ≥ {min_weld_clr:.0f} mm",
             showarrow=False, xanchor="center", yanchor="bottom",
-            font=dict(size=8, color="#dc2626"),
+            font=dict(size=8, color="#b52b2b"),
             bgcolor="rgba(255,255,255,0.6)", borderpad=2,
         )
         fig.add_annotation(
             x=L_shell + h_head * 0.5, y=r_weld_boundary + 12,
             text=f"Weld excl. ≥ {min_weld_clr:.0f} mm",
             showarrow=False, xanchor="center", yanchor="bottom",
-            font=dict(size=8, color="#dc2626"),
+            font=dict(size=8, color="#b52b2b"),
             bgcolor="rgba(255,255,255,0.6)", borderpad=2,
         )
 
@@ -397,7 +397,7 @@ def _vessel_figure(
     for sign in (1, -1):
         fig.add_trace(go.Scatter(
             x=[0.0, L_shell], y=[sign * R, sign * R],
-            mode="lines", line=dict(color="#2563eb", width=2.5),
+            mode="lines", line=dict(color="#3a6fa8", width=2.5),
             name="Shell inner wall" if sign == 1 else None,
             showlegend=(sign == 1), hoverinfo="skip",
         ))
@@ -407,7 +407,7 @@ def _vessel_figure(
     full_y = ys_upper + [-y for y in reversed(ys_upper)]
     fig.add_trace(go.Scatter(
         x=full_z, y=full_y,
-        mode="lines", line=dict(color="#2563eb", width=2.5),
+        mode="lines", line=dict(color="#3a6fa8", width=2.5),
         name="Head inner surface", hoverinfo="skip",
     ))
 
@@ -416,7 +416,7 @@ def _vessel_figure(
     fig.add_trace(go.Scatter(
         x=zs_right + list(reversed(zs_right)),
         y=full_y,
-        mode="lines", line=dict(color="#2563eb", width=2.5),
+        mode="lines", line=dict(color="#3a6fa8", width=2.5),
         showlegend=False, hoverinfo="skip",
     ))
 
@@ -427,15 +427,15 @@ def _vessel_figure(
                 x=[0.0, L_shell],
                 y=[sign * (R + t_shell_nom), sign * (R + t_shell_nom)],
                 mode="lines",
-                line=dict(color="#93c5fd", width=1.5, dash="dot"),
+                line=dict(color="#8db3d2", width=1.5, dash="dot"),
                 name="Shell outer wall" if sign == 1 else None,
                 showlegend=(sign == 1), hoverinfo="skip",
             ))
 
     # ── Tangent lines and centreline ─────────────────────────────────────────
-    fig.add_vline(x=0,       line=dict(color="#94a3b8", dash="dot", width=1))
-    fig.add_vline(x=L_shell, line=dict(color="#94a3b8", dash="dot", width=1))
-    fig.add_hline(y=0,       line=dict(color="#e2e8f0", width=1, dash="dot"))
+    fig.add_vline(x=0,       line=dict(color="#8aa0b4", dash="dot", width=1))
+    fig.add_vline(x=L_shell, line=dict(color="#8aa0b4", dash="dot", width=1))
+    fig.add_hline(y=0,       line=dict(color="#c5d4e0", width=1, dash="dot"))
 
     # ── Nozzles ───────────────────────────────────────────────────────────────
     # Convention:
@@ -466,16 +466,16 @@ def _vessel_figure(
         if nozzle_checks and nz_cfg.get("tag") in nozzle_checks:
             sev = nozzle_checks.get(nz_cfg.get("tag"))
         if sev == "error":
-            nc, nfill = "#dc2626", "rgba(220,38,38,0.22)"
+            nc, nfill = "#b52b2b", "rgba(181,43,43,0.20)"
         elif sev == "warning":
-            nc, nfill = "#d97706", "rgba(217,119,6,0.22)"
+            nc, nfill = "#b8760e", "rgba(184,118,14,0.20)"
         else:
             if not geom_ok or reinf_ok is False:
-                nc, nfill = "#dc2626", "rgba(220,38,38,0.22)"
+                nc, nfill = "#b52b2b", "rgba(181,43,43,0.20)"
             elif code_ok is False or reinf_ok is None:
-                nc, nfill = "#d97706", "rgba(217,119,6,0.22)"
+                nc, nfill = "#b8760e", "rgba(184,118,14,0.20)"
             else:
-                nc, nfill = "#16a34a", "rgba(22,163,74,0.22)"
+                nc, nfill = "#2e8b57", "rgba(46,139,87,0.20)"
 
         hover = (
             f"<b>{nz_cfg['tag']}</b> — {nz_cfg['service']}<br>"
@@ -551,7 +551,7 @@ def _vessel_figure(
             ))
             # Pulsing halo for problem nozzles (warning -> orange, error -> red)
             if sev in ("warning", "error"):
-                pulse_col = "#d97706" if sev == "warning" else "#dc2626"
+                pulse_col = "#b8760e" if sev == "warning" else "#b52b2b"
                 fig.add_trace(go.Scatter(
                     x=[x_tip], y=[ny], mode="markers",
                     marker=dict(size=min(40.0, hw * 6.0), color=pulse_col, opacity=0.0),
@@ -608,12 +608,12 @@ def _vessel_figure(
                 # Dim 1 (red): LZHH level → inlet bore bottom
                 _clr1 = _ny_bore_bot - _y_lzhh
                 _draw_dim(_x_d1, _y_lzhh, _ny_bore_bot,
-                          "#dc2626" if abs(_clr1) < 150 else "#16a34a",
+                          "#b52b2b" if abs(_clr1) < 150 else "#2e8b57",
                           f"{_clr1:.0f} mm")
 
                 # Dim 2 (purple): nozzle OD top → vessel crown
                 _clr2 = R - _ny_noz_top
-                _draw_dim(_x_d2, _ny_noz_top, R, "#7c3aed",
+                _draw_dim(_x_d2, _ny_noz_top, R, "#5e70a8",
                           f"{_clr2:.0f} mm")
 
         elif loc in ("Shell — top", "Shell — bottom"):
@@ -675,7 +675,7 @@ def _vessel_figure(
             ))
             # Pulsing halo for problem nozzles (warning -> orange, error -> red)
             if sev in ("warning", "error"):
-                pulse_col = "#d97706" if sev == "warning" else "#dc2626"
+                pulse_col = "#b8760e" if sev == "warning" else "#b52b2b"
                 fig.add_trace(go.Scatter(
                     x=[nx], y=[y_tip], mode="markers",
                     marker=dict(size=min(40.0, hw * 6.0), color=pulse_col, opacity=0.0),
@@ -735,7 +735,7 @@ def _vessel_figure(
             ))
             # Pulsing halo for side nozzles
             if sev in ("warning", "error"):
-                pulse_col = "#d97706" if sev == "warning" else "#dc2626"
+                pulse_col = "#b8760e" if sev == "warning" else "#b52b2b"
                 fig.add_trace(go.Scatter(
                     x=[nx], y=[0], mode="markers",
                     marker=dict(size=min(40.0, cr * 6.0), color=pulse_col, opacity=0.0),
@@ -750,7 +750,7 @@ def _vessel_figure(
             )
 
     # ── Baffle plates (distribution plate with distributed holes) ────────────
-    _bclr  = "#7c3aed" if has_baffles else "#c4b5fd"
+    _bclr  = "#5e70a8" if has_baffles else "#a8b2ce"
     _blabel = f"Baffle ({baffle_open_pct:.0f}% open)" if has_baffles else "Baffle (disabled)"
     if L_baffle_mm > 0:
         for bx in (L_baffle_mm, L_shell - L_baffle_mm):
@@ -782,7 +782,7 @@ def _vessel_figure(
     fig.add_annotation(
         x=L_shell * 0.5, y=0,
         text=f"Di = {Di:.0f} mm",
-        showarrow=False, font=dict(size=11, color="#475569"),
+        showarrow=False, font=dict(size=11, color="#3e5268"),
     )
 
     # ── Liquid level lines ────────────────────────────────────────────────────
@@ -797,7 +797,7 @@ def _vessel_figure(
         for tag, h in sorted_lvls:
             h = max(0.0, min(Di, h))
             y_line = h - R
-            colour, dash, width = _LEVEL_STYLE.get(tag, ("#64748b", "dash", 1.5))
+            colour, dash, width = _LEVEL_STYLE.get(tag, ("#5e7085", "dash", 1.5))
             fig.add_shape(
                 type="line", x0=x_line_l, x1=x_line_r, y0=y_line, y1=y_line,
                 line=dict(color=colour, width=width, dash=dash),
@@ -819,12 +819,12 @@ def _vessel_figure(
     fig.add_annotation(
         x=-(h_head + 2) if h_head > 0 else -5, y=0,
         text="Pole", showarrow=False, xanchor="right",
-        font=dict(size=10, color="#64748b"),
+        font=dict(size=10, color="#5e7085"),
     )
     fig.add_annotation(
         x=L_shell + h_head + 2 if h_head > 0 else L_shell + 5, y=0,
         text="Pole", showarrow=False, xanchor="left",
-        font=dict(size=10, color="#64748b"),
+        font=dict(size=10, color="#5e7085"),
     )
 
     # ── Overall length dimension (pole-to-pole) ───────────────────────────────
@@ -833,7 +833,7 @@ def _vessel_figure(
     x_right = L_shell + h_head
     y_dim   = -(R + max(t_shell_nom, 15) + 45)   # below the bottom outer wall
     tick_h  = 18
-    dim_colour = "#475569"
+    dim_colour = "#3e5268"
     # Horizontal dimension line
     fig.add_shape(type="line", x0=x_left, x1=x_right, y0=y_dim, y1=y_dim,
                   line=dict(color=dim_colour, width=1.5))
@@ -866,25 +866,25 @@ def _vessel_figure(
             fig.add_shape(type="rect",
                           x0=sx - hw, x1=sx + hw,
                           y0=y_saddle_bot, y1=y_saddle_top,
-                          fillcolor="rgba(148,163,184,0.45)",
-                          line=dict(color="#64748b", width=1.5))
+                          fillcolor="rgba(120,145,168,0.42)",
+                          line=dict(color="#5e7085", width=1.5))
             # Base plate
             fig.add_shape(type="rect",
                           x0=sx - hw - saddle_base_extra, x1=sx + hw + saddle_base_extra,
                           y0=y_base_bot, y1=y_saddle_bot,
-                          fillcolor="rgba(100,116,139,0.55)",
-                          line=dict(color="#64748b", width=1.5))
+                          fillcolor="rgba(88,108,130,0.52)",
+                          line=dict(color="#5e7085", width=1.5))
         # Saddle position dimension (distance from tangent)
         for sx in (saddle_a_mm, L_shell - saddle_a_mm):
             tang = 0 if sx < L_shell / 2 else L_shell
             fig.add_shape(type="line",
                           x0=tang, x1=sx, y0=y_base_bot - 12, y1=y_base_bot - 12,
-                          line=dict(color="#94a3b8", width=1, dash="dot"))
+                          line=dict(color="#8aa0b4", width=1, dash="dot"))
             fig.add_annotation(
                 x=(tang + sx) / 2, y=y_base_bot - 24,
                 text=f"{saddle_a_mm:.0f} mm",
                 showarrow=False, xanchor="center", yanchor="top",
-                font=dict(size=9, color="#64748b"),
+                font=dict(size=9, color="#5e7085"),
             )
 
     saddle_depth = (saddle_h + saddle_base_h + 40) if saddle_a_mm > 0 else 0
@@ -945,20 +945,20 @@ def _vessel_figure(
             orientation="h", x=0.5, y=-0.12,
             xanchor="center", yanchor="top",
             bgcolor="rgba(255,255,255,0.9)",
-            bordercolor="#e2e8f0", borderwidth=1,
+            bordercolor="#c5d4e0", borderwidth=1,
             font=dict(size=9),
         ),
         xaxis=dict(
             title="Axial position (mm) — 0 = left tangent, L = right tangent",
             range=[x_min, x_max],
-            zeroline=False, gridcolor="#f8fafc", tickformat=",d",
+            zeroline=False, gridcolor="#f0f5f9", tickformat=",d",
             constrain="domain",
         ),
         yaxis=dict(
             title="Vertical position (mm) — 0 = vessel axis",
             range=[-y_lim_bot, y_lim],
             scaleanchor="x", scaleratio=1,
-            gridcolor="#f8fafc",
+            gridcolor="#f0f5f9",
         ),
     )
     return fig
@@ -1306,11 +1306,11 @@ def _hex_alpha(hex_color: str, alpha: float = 0.25) -> str:
 
 def _nozzle_zone_color(nres) -> str:
     """Traffic-light colour for a nozzle result."""
-    if not nres.geom_ok:          return "#dc2626"
-    if nres.code_ok is False:     return "#dc2626"
-    if nres.zone == "knuckle":    return "#d97706"
-    if nres.code_ok is None:      return "#d97706"
-    return "#16a34a"
+    if not nres.geom_ok:          return "#b52b2b"
+    if nres.code_ok is False:     return "#b52b2b"
+    if nres.zone == "knuckle":    return "#b8760e"
+    if nres.code_ok is None:      return "#b8760e"
+    return "#2e8b57"
 
 
 def _endcap_face_figure(
@@ -1350,7 +1350,7 @@ def _endcap_face_figure(
         # Crown zone (filled inner circle)
         fig.add_trace(go.Scatter(
             x=[r_cj * u for u in ux], y=[r_cj * u for u in uy],
-            fill="toself", fillcolor="rgba(34,197,94,0.20)",
+            fill="toself", fillcolor="rgba(46,139,87,0.17)",
             line=dict(color="rgba(0,0,0,0)"),
             name=f"Crown zone — standard analysis OK (r ≤ {r_cj:.0f} mm)",
             hoverinfo="skip",
@@ -1359,7 +1359,7 @@ def _endcap_face_figure(
         fig.add_trace(go.Scatter(
             x=[R * u for u in ux] + [r_cj * u for u in reversed(ux)],
             y=[R * u for u in uy] + [r_cj * u for u in reversed(uy)],
-            fill="toself", fillcolor="rgba(245,158,11,0.22)",
+            fill="toself", fillcolor="rgba(192,125,26,0.20)",
             line=dict(color="rgba(0,0,0,0)"),
             name="Knuckle zone — specialist analysis required",
             hoverinfo="skip",
@@ -1367,7 +1367,7 @@ def _endcap_face_figure(
         # Crown/knuckle boundary circle
         fig.add_trace(go.Scatter(
             x=[r_cj * u for u in ux], y=[r_cj * u for u in uy],
-            mode="lines", line=dict(color="#16a34a", width=1.8, dash="dash"),
+            mode="lines", line=dict(color="#2e8b57", width=1.8, dash="dash"),
             name=f"Crown/knuckle boundary  r = {r_cj:.0f} mm",
             hoverinfo="skip",
         ))
@@ -1377,7 +1377,7 @@ def _endcap_face_figure(
         r_rev = R / math.sqrt(_k * _k - 1.0)
         fig.add_trace(go.Scatter(
             x=[r_rev * u for u in ux], y=[r_rev * u for u in uy],
-            fill="toself", fillcolor="rgba(34,197,94,0.20)",
+            fill="toself", fillcolor="rgba(46,139,87,0.17)",
             line=dict(color="rgba(0,0,0,0)"),
             name=f"Tensile hoop zone — standard analysis OK (r ≤ {r_rev:.0f} mm)",
             hoverinfo="skip",
@@ -1385,14 +1385,14 @@ def _endcap_face_figure(
         fig.add_trace(go.Scatter(
             x=[R * u for u in ux] + [r_rev * u for u in reversed(ux)],
             y=[R * u for u in uy] + [r_rev * u for u in reversed(uy)],
-            fill="toself", fillcolor="rgba(245,158,11,0.22)",
+            fill="toself", fillcolor="rgba(192,125,26,0.20)",
             line=dict(color="rgba(0,0,0,0)"),
             name="Compressive hoop zone — detailed analysis needed",
             hoverinfo="skip",
         ))
         fig.add_trace(go.Scatter(
             x=[r_rev * u for u in ux], y=[r_rev * u for u in uy],
-            mode="lines", line=dict(color="#16a34a", width=1.8, dash="dash"),
+            mode="lines", line=dict(color="#2e8b57", width=1.8, dash="dash"),
             name=f"Hoop-stress reversal  r = {r_rev:.0f} mm",
             hoverinfo="skip",
         ))
@@ -1401,7 +1401,7 @@ def _endcap_face_figure(
         # Hemispherical, Conical, Flat — full face is usable zone
         fig.add_trace(go.Scatter(
             x=[R * u for u in ux], y=[R * u for u in uy],
-            fill="toself", fillcolor="rgba(34,197,94,0.18)",
+            fill="toself", fillcolor="rgba(46,139,87,0.15)",
             line=dict(color="rgba(0,0,0,0)"),
             name="Full head face — code analysis applicable throughout",
             hoverinfo="skip",
@@ -1413,21 +1413,21 @@ def _endcap_face_figure(
         fig.add_trace(go.Scatter(
             x=[R * u for u in ux] + [r_excl * u for u in reversed(ux)],
             y=[R * u for u in uy] + [r_excl * u for u in reversed(uy)],
-            fill="toself", fillcolor="rgba(220,38,38,0.10)",
+            fill="toself", fillcolor="rgba(181,43,43,0.10)",
             line=dict(color="rgba(0,0,0,0)"),
             name=f"Weld-exclusion ring ≥ {min_weld_clr:.0f} mm from head-shell seam",
             hoverinfo="skip",
         ))
         fig.add_trace(go.Scatter(
             x=[r_excl * u for u in ux], y=[r_excl * u for u in uy],
-            mode="lines", line=dict(color="#dc2626", width=1.2, dash="dot"),
+            mode="lines", line=dict(color="#b52b2b", width=1.2, dash="dot"),
             showlegend=False, hoverinfo="skip",
         ))
 
     # ── Vessel inner wall circle ──────────────────────────────────────────────
     fig.add_trace(go.Scatter(
         x=[R * u for u in ux], y=[R * u for u in uy],
-        mode="lines", line=dict(color="#1d4ed8", width=2.5),
+        mode="lines", line=dict(color="#2e5f98", width=2.5),
         name=f"Head inner wall  Di = {Di:.0f} mm",
         hoverinfo="skip",
     ))
@@ -1436,7 +1436,7 @@ def _endcap_face_figure(
     d = R * 0.05
     for xs, ys in [([-d, d], [0, 0]), ([0, 0], [-d, d])]:
         fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines",
-                                 line=dict(color="#94a3b8", width=1.2),
+                                 line=dict(color="#8aa0b4", width=1.2),
                                  showlegend=False, hoverinfo="skip"))
 
     # ── Nozzle circles ────────────────────────────────────────────────────────
@@ -1499,13 +1499,13 @@ def _endcap_face_figure(
         margin=dict(l=5, r=5, t=36 if title else 12, b=5),
         plot_bgcolor="white", paper_bgcolor="white",
         title=dict(text=f"<b>{title}</b>",
-                   font=dict(size=11, color="#334155"), x=0.5) if title else {},
+                   font=dict(size=11, color="#243c54"), x=0.5) if title else {},
         showlegend=True,
         legend=dict(
             orientation="h", x=0.5, y=-0.04,
             xanchor="center", yanchor="top",
             font=dict(size=8), bgcolor="rgba(255,255,255,0.92)",
-            bordercolor="#e2e8f0", borderwidth=1,
+            bordercolor="#c5d4e0", borderwidth=1,
         ),
         xaxis=dict(range=[-lim, lim], scaleanchor="y", scaleratio=1,
                    zeroline=False, showgrid=False, showticklabels=False),
@@ -1739,11 +1739,11 @@ def _render_head_comparison_table(
 
 def _badge(label: str, ok: bool | None, detail: str = "") -> str:
     if ok is True:
-        colour, icon = "#16a34a", "✓"
+        colour, icon = "#2e8b57", "✓"
     elif ok is False:
-        colour, icon = "#dc2626", "✗"
+        colour, icon = "#b52b2b", "✗"
     else:
-        colour, icon = "#d97706", "?"
+        colour, icon = "#b8760e", "?"
     style = (f"display:inline-block;padding:4px 10px;border-radius:6px;"
              f"background:{colour}18;color:{colour};border:1px solid {colour}44;"
              f"font-weight:600;font-size:0.87em;")
@@ -2689,7 +2689,7 @@ def main():
 
                 st.markdown(
                     f"### {nz['tag']} — {nz['service']}  "
-                    f"<span style='font-size:0.85em;color:#64748b'>DN{nz['dn']}  ·  {nz['loc']}</span>",
+                    f"<span style='font-size:0.85em;color:#5e7085'>DN{nz['dn']}  ·  {nz['loc']}</span>",
                     unsafe_allow_html=True,
                 )
 
@@ -2734,13 +2734,13 @@ def main():
                 if nres.head_depth_mm > 0:
                     depth_frac = nres.z_on_head_mm / nres.head_depth_mm
                     _bar_pct = min(100, int(depth_frac * 100))
-                    _bar_col = "#16a34a" if _bar_pct < 50 else "#d97706" if _bar_pct < 75 else "#dc2626"
+                    _bar_col = "#2e8b57" if _bar_pct < 50 else "#b8760e" if _bar_pct < 75 else "#b52b2b"
                     st.markdown(
                         f"<div style='margin:4px 0 8px 0'>"
-                        f"<span style='font-size:0.82em;color:#64748b'>"
+                        f"<span style='font-size:0.82em;color:#5e7085'>"
                         f"Axial depth on head surface: <b>{nres.z_on_head_mm:.0f} mm</b> "
                         f"from tangent ({_bar_pct} % of head depth)</span><br>"
-                        f"<div style='background:#f1f5f9;border-radius:4px;height:8px;width:100%;margin-top:3px'>"
+                        f"<div style='background:#eaeff5;border-radius:4px;height:8px;width:100%;margin-top:3px'>"
                         f"<div style='background:{_bar_col};border-radius:4px;height:8px;"
                         f"width:{_bar_pct}%'></div></div></div>",
                         unsafe_allow_html=True,
@@ -3347,7 +3347,7 @@ def main():
         rows_vol = []
         for row in vol_res_disp["levels"]:
             tag = row["tag"]
-            colour, _, _ = _LEVEL_STYLE.get(tag, ("#64748b", "dash", 1.5))
+            colour, _, _ = _LEVEL_STYLE.get(tag, ("#5e7085", "dash", 1.5))
             rows_vol.append({
                 "Level":               f'<span style="color:{colour};font-weight:700">{tag}</span>',
                 "Height (mm)":         f"{row['h_mm']:.0f}",
@@ -3361,9 +3361,9 @@ def main():
         table_html = pd.DataFrame(rows_vol).to_html(index=False, escape=False, classes="vol-table", border=0)
         st.markdown(
             "<style>.vol-table{width:100%;border-collapse:collapse;font-size:0.88em}"
-            ".vol-table th{background:#f1f5f9;padding:6px 10px;text-align:left;border-bottom:2px solid #e2e8f0}"
-            ".vol-table td{padding:5px 10px;border-bottom:1px solid #f1f5f9}"
-            ".vol-table tr:hover td{background:#f8fafc}</style>",
+            ".vol-table th{background:#eaeff5;padding:6px 10px;text-align:left;border-bottom:2px solid #c5d4e0}"
+            ".vol-table td{padding:5px 10px;border-bottom:1px solid #eaeff5}"
+            ".vol-table tr:hover td{background:#f0f5f9}</style>",
             unsafe_allow_html=True,
         )
         st.markdown(table_html, unsafe_allow_html=True)
