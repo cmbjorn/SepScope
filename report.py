@@ -196,7 +196,7 @@ def _sec(letter: str, title: str, content: str) -> str:
 def _dt(headers: list[str], rows: list[list]) -> str:
     ths = "".join(f"<th>{_e(h)}</th>" for h in headers)
     trs = "".join(
-        "<tr>" + "".join(f"<td>{c if c.startswith('<') else _e(c)}</td>" for c in row) + "</tr>"
+        "<tr>" + "".join(f"<td>{c if str(c).startswith('<') else _e(str(c))}</td>" for c in row) + "</tr>"
         for row in rows
     )
     return f'<table class="dt"><thead><tr>{ths}</tr></thead><tbody>{trs}</tbody></table>'

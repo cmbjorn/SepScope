@@ -749,7 +749,7 @@ def generate_word_report(
         _caption(doc,
                  f"Governing load case: LDV inventory ({il['V_ldv_m3']*1000:.1f} L) "
                  f"floods into vessel in {il['t_flood_s']:.0f} s, split across "
-                 f"{il['n_inlets']} inlet(s). "
+                 f"{il.get('n_inlets', 1)} inlet(s). "
                  "Pure liquid density assumed (startup slug). "
                  "No standard prescribes this method — verify per project structural code "
                  "(EN 1993-1-8 / AWS D1.1). Safety factors: SF = 3.0 inlet device (impulsive), "
