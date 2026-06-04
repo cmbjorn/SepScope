@@ -701,25 +701,33 @@ def generate_word_report(
                  "empty during operation or startup. Volumes include full vessel geometry "
                  "(cylinder + both endcaps). User specifies required LDV + safety factor; "
                  "two independent checks: Segment A (VB → LZLL) ≥ LDV×SF  and  Segment B (LZLL → LALL) ≥ LDV×SF.")
+        _sf_b = ldv.get("sf_b", ldv["sf"])
         ldv_pairs = [
             ("Effective vessel bottom (VB)",
              f"{ldv['eff_vb_mm']:.0f} mm above vessel bottom"),
-            ("Safety factor", f"{ldv['sf']:.2f}"),
+            ("Safety factor — Seg A", f"{ldv['sf']:.2f}"),
+            ("Safety factor — Seg B", f"{_sf_b:.2f}"),
         ]
         if ldv.get("target_m3") is not None:
+            _req_a = (ldv.get("ldv_required_a_m3") or ldv.get("ldv_required_m3") or 0.0)
+            _req_b = (ldv.get("ldv_required_b_m3") or ldv.get("ldv_required_m3") or 0.0)
             ldv_pairs.append(("Required LDV (before SF)",
                               f"{ldv['target_m3']*1000:.1f} L  ({ldv['target_m3']:.4f} m³)"))
-            ldv_pairs.append(("Required LDV with SF",
-                              f"{ldv['ldv_required_m3']*1000:.1f} L  ({ldv['ldv_required_m3']:.4f} m³)"))
             ldv_pairs.append(("", ""))  # spacer
             ldv_pairs.append(("Segment A (VB → LZLL)",
                               f"{ldv['seg_a_m3']*1000:.1f} L  ({ldv['seg_a_m3']:.4f} m³)"))
-            ldv_pairs.append(("Segment A ≥ Required LDV×SF?",
+            ldv_pairs.append((f"Seg A Required  (Target × SF {ldv['sf']:.2f})",
+                              f"{_req_a*1000:.1f} L  ({_req_a:.4f} m³)"))
+            ldv_pairs.append(("Segment A ≥ Required?",
                               "✓ PASS" if ldv.get("seg_a_ok") else "✗ FAIL"))
+            ldv_pairs.append(("", ""))  # spacer
             ldv_pairs.append(("Segment B (LZLL → LALL)",
                               f"{ldv['seg_b_m3']*1000:.1f} L  ({ldv['seg_b_m3']:.4f} m³)"))
-            ldv_pairs.append(("Segment B ≥ Required LDV×SF?",
+            ldv_pairs.append((f"Seg B Required  (Target × SF {_sf_b:.2f})",
+                              f"{_req_b*1000:.1f} L  ({_req_b:.4f} m³)"))
+            ldv_pairs.append(("Segment B ≥ Required?",
                               "✓ PASS" if ldv.get("seg_b_ok") else "✗ FAIL"))
+            ldv_pairs.append(("", ""))
             ldv_pairs.append(("Both segments adequate?",
                               "✓ PASS" if ldv.get("ok") else "✗ FAIL"))
         else:

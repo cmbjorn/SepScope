@@ -1335,16 +1335,21 @@ def generate_datasheet_html(
                  ldv.get("seg_b_ok") if _has_target else None),
         ]
         if ldv.get("target_m3") is not None:
-            tgt_L = ldv["target_m3"] * 1000
-            tgt_sf_L = ldv.get("ldv_required_m3", 0.0) * 1000
+            tgt_L    = ldv["target_m3"] * 1000
+            req_a_L  = (ldv.get("ldv_required_a_m3") or ldv.get("ldv_required_m3") or 0.0) * 1000
+            req_b_L  = (ldv.get("ldv_required_b_m3") or ldv.get("ldv_required_m3") or 0.0) * 1000
             sizing_rows += [
                 _row("LDV Target  (before SF)  — downstream equipment volume",
                      f"{tgt_L:.1f}  L  (input)",
                      "User-specified required LDV",
                      None),
-                _row(f"LDV Required  (Target × SF {ldv['sf']:.2f})",
-                     f"{tgt_sf_L:.1f}  L",
-                     "Requirement for both segment checks",
+                _row(f"Seg A Required  (Target × SF {ldv['sf']:.2f})",
+                     f"{req_a_L:.1f}  L",
+                     "Requirement for Segment A check",
+                     None),
+                _row(f"Seg B Required  (Target × SF {ldv.get('sf_b', ldv['sf']):.2f})",
+                     f"{req_b_L:.1f}  L",
+                     "Requirement for Segment B check",
                      None),
             ]
     if inlet_nzs:

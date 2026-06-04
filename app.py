@@ -2179,7 +2179,8 @@ def main():
         )
         include_ldv = _yn("Calculate LDV", "include_ldv", default="No")
         vb_offset_mm = 0.0
-        ldv_sf = 1.5
+        ldv_sf   = 1.5
+        ldv_sf_b = 1.5
         ldv_target_m3: float | None = None   # None = not set
         if include_ldv:
             vb_offset_mm = st.number_input(
@@ -2190,13 +2191,21 @@ def main():
                      "suction deadband, instrument dead zone, or settled solids. "
                      "0 = use actual vessel bottom.",
             )
-            ldv_sf = st.number_input(
-                "Safety factor",
+            _sf_c1, _sf_c2 = st.columns(2)
+            ldv_sf = _sf_c1.number_input(
+                "Seg A safety factor",
                 min_value=1.0, max_value=3.0, value=1.5, step=0.05,
                 key="ldv_sf",
-                help="Applied to the required LDV target: Required = Target × SF. "
-                     "Accounts for instrument uncertainty, measurement deadband, and operating margin. "
-                     "Typical: 1.25–2.0.",
+                help="Seg A (VB → LZLL): Required = Target × SF.  "
+                     "Accounts for instrument uncertainty and deadband.  Typical: 1.25–2.0.",
+            )
+            ldv_sf_b = _sf_c2.number_input(
+                "Seg B safety factor",
+                min_value=1.0, max_value=3.0, value=1.5, step=0.05,
+                key="ldv_sf_b",
+                help="Seg B (LZLL → LALL): Required = Target × SF.  "
+                     "Can be set to 1.0 if the segment is sized without an additional margin "
+                     "(e.g. LALL is a hard interlock and no instrument deadband applies).",
             )
             if _yn("Set specific LDV target", "ldv_set_target", default="No"):
                 _ldv_target_L = st.number_input(
@@ -2847,28 +2856,33 @@ def main():
         _seg_a = max(0.0, _vmap.get("LDV_LZLL", 0.0) - _vmap.get("LDV_VB",   0.0))
         _seg_b = max(0.0, _vmap.get("LDV_LALL", 0.0) - _vmap.get("LDV_LZLL", 0.0))
 
-        # If no specific LDV target is set, use the segments themselves scaled by SF
-        _ldv_required = None
+        # Per-segment required volumes (None if no target set)
+        _ldv_required_a = None
+        _ldv_required_b = None
         if ldv_target_m3 is not None and ldv_target_m3 > 0:
-            _ldv_required = ldv_target_m3 * ldv_sf
-        
-        # Two independent checks
-        _seg_a_ok = _seg_a >= (_ldv_required if _ldv_required is not None else 0.0)
-        _seg_b_ok = _seg_b >= (_ldv_required if _ldv_required is not None else 0.0)
-        _ldv_ok = _seg_a_ok and _seg_b_ok if _ldv_required is not None else True
+            _ldv_required_a = ldv_target_m3 * ldv_sf
+            _ldv_required_b = ldv_target_m3 * ldv_sf_b
+
+        # Two independent checks, each against its own required volume
+        _seg_a_ok = _seg_a >= (_ldv_required_a if _ldv_required_a is not None else 0.0)
+        _seg_b_ok = _seg_b >= (_ldv_required_b if _ldv_required_b is not None else 0.0)
+        _ldv_ok   = _seg_a_ok and _seg_b_ok if _ldv_required_a is not None else True
 
         _ldv_result = {
-            "eff_vb_mm":    _eff_vb,
-            "lzll_mm":      _lzll_h,
-            "lall_mm":      _lall_h,
-            "seg_a_m3":     _seg_a,
-            "seg_b_m3":     _seg_b,
-            "ldv_required_m3": _ldv_required,  # None if not set; otherwise LDV × SF
-            "sf":           ldv_sf,
-            "seg_a_ok":     _seg_a_ok,         # Segment A ≥ LDV×SF?
-            "seg_b_ok":     _seg_b_ok,         # Segment B ≥ LDV×SF?
-            "ok":           _ldv_ok,           # Both segments OK?
-            "target_m3":    ldv_target_m3,     # User's specified LDV (before SF)
+            "eff_vb_mm":       _eff_vb,
+            "lzll_mm":         _lzll_h,
+            "lall_mm":         _lall_h,
+            "seg_a_m3":        _seg_a,
+            "seg_b_m3":        _seg_b,
+            "ldv_required_m3": _ldv_required_a,   # kept for report back-compat
+            "ldv_required_a_m3": _ldv_required_a,
+            "ldv_required_b_m3": _ldv_required_b,
+            "sf":              ldv_sf,
+            "sf_b":            ldv_sf_b,
+            "seg_a_ok":        _seg_a_ok,
+            "seg_b_ok":        _seg_b_ok,
+            "ok":              _ldv_ok,
+            "target_m3":       ldv_target_m3,
         }
 
     # Count inlet nozzles for n_inlets parameter
@@ -3140,13 +3154,13 @@ def main():
                 "Two independent checks: Segment A (VB → LZLL) ≥ Required?  and  Segment B (LZLL → LALL) ≥ Required?"
             )
 
-            if ldv.get("target_m3") is not None and ldv.get("ldv_required_m3") is not None:
+            if ldv.get("target_m3") is not None and ldv.get("ldv_required_a_m3") is not None:
                 # Show metrics when a specific LDV target is set
                 _lc1, _lc2, _lc3, _lc4 = st.columns(4)
                 _lc1.metric(
-                    "Required LDV (with SF)",
-                    f"{ldv['ldv_required_m3'] * 1000:.1f} L",
-                    help=f"Target LDV {ldv['target_m3']*1000:.1f} L  ×  SF {ldv['sf']:.2f}",
+                    "Seg A — Required",
+                    f"{ldv['ldv_required_a_m3'] * 1000:.1f} L",
+                    help=f"Target {ldv['target_m3']*1000:.1f} L  ×  SF {ldv['sf']:.2f}",
                 )
                 _lc2.metric(
                     "Seg A (VB → LZLL)",
@@ -3156,21 +3170,27 @@ def main():
                     help=f"Volume from effective VB ({ldv['eff_vb_mm']:.0f} mm) to LZLL ({ldv['lzll_mm']:.0f} mm).",
                 )
                 _lc3.metric(
+                    "Seg B — Required",
+                    f"{ldv['ldv_required_b_m3'] * 1000:.1f} L",
+                    help=f"Target {ldv['target_m3']*1000:.1f} L  ×  SF {ldv['sf_b']:.2f}",
+                )
+                _lc4.metric(
                     "Seg B (LZLL → LALL)",
                     f"{ldv['seg_b_m3'] * 1000:.1f} L",
                     delta="✓ PASS" if ldv.get("seg_b_ok") else "✗ FAIL",
                     delta_color="normal" if ldv.get("seg_b_ok") else "inverse",
                     help=f"Volume from LZLL ({ldv['lzll_mm']:.0f} mm) to LALL ({ldv['lall_mm']:.0f} mm).",
                 )
-                _lc4.metric(
+                _ov_c1, _ov_c2 = st.columns([1, 3])
+                _ov_c1.metric(
                     "Overall",
                     "✓ PASS" if ldv.get("ok") else "✗ FAIL",
-                    help="Both Segment A and Segment B must pass the check.",
+                    help="Both Segment A and Segment B must pass their respective checks.",
                     delta_color="normal" if ldv.get("ok") else "inverse",
                 )
             else:
                 # Show basic metrics when no target is set
-                _lc1, _lc2, _lc3 = st.columns(3)
+                _lc1, _lc2, _lc3, _lc4 = st.columns(4)
                 _lc1.metric(
                     "Seg A (VB → LZLL)",
                     f"{ldv['seg_a_m3'] * 1000:.1f} L",
@@ -3182,26 +3202,36 @@ def main():
                     help=f"Volume from LZLL ({ldv['lzll_mm']:.0f} mm) to LALL ({ldv['lall_mm']:.0f} mm).",
                 )
                 _lc3.metric(
-                    "Safety Factor",
+                    "SF — Seg A",
                     f"{ldv['sf']:.2f}",
+                    help="Specify a target LDV above to perform checks.",
+                )
+                _lc4.metric(
+                    "SF — Seg B",
+                    f"{ldv['sf_b']:.2f}",
                     help="Specify a target LDV above to perform checks.",
                 )
 
             # Breakdown table
+            _has_tgt = ldv.get("target_m3") is not None
             _ldv_rows = [
                 {
                     "Segment": "A — VB → LZLL",
                     "From": f"{ldv['eff_vb_mm']:.0f} mm",
                     "To": f"{ldv['lzll_mm']:.0f} mm  (LZLL)",
                     "Volume": f"{ldv['seg_a_m3']*1000:.1f} L",
-                    "Status": ("✓ PASS" if ldv.get("seg_a_ok") else "✗ FAIL") if ldv.get("target_m3") else "—",
+                    "SF": f"{ldv['sf']:.2f}",
+                    "Required": f"{ldv['ldv_required_a_m3']*1000:.1f} L" if _has_tgt else "—",
+                    "Status": ("✓ PASS" if ldv.get("seg_a_ok") else "✗ FAIL") if _has_tgt else "—",
                 },
                 {
                     "Segment": "B — LZLL → LALL",
                     "From": f"{ldv['lzll_mm']:.0f} mm  (LZLL)",
                     "To": f"{ldv['lall_mm']:.0f} mm  (LALL)",
                     "Volume": f"{ldv['seg_b_m3']*1000:.1f} L",
-                    "Status": ("✓ PASS" if ldv.get("seg_b_ok") else "✗ FAIL") if ldv.get("target_m3") else "—",
+                    "SF": f"{ldv['sf_b']:.2f}",
+                    "Required": f"{ldv['ldv_required_b_m3']*1000:.1f} L" if _has_tgt else "—",
+                    "Status": ("✓ PASS" if ldv.get("seg_b_ok") else "✗ FAIL") if _has_tgt else "—",
                 },
             ]
             st.dataframe(pd.DataFrame(_ldv_rows), hide_index=True, use_container_width=True)
