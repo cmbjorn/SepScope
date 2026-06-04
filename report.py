@@ -6,8 +6,10 @@ Structure (mirrors industry standard / API 12J Annex E):
   Sketch      — SVG side elevation with nozzles, levels, dimensions
   A  Design conditions   — operating & design P/T, hydro test
   B  Process fluids      — gas phase | liquid phase tables + inlet summary
-  C  Mechanical design   — geometry, thicknesses, material, supports
+  C  Mechanical design   — geometry, thicknesses, material, supports, weight
   D  Separator sizing    — API 12J screening results (criterion/actual/limit/status)
+  D.1  LDV              — Liquid Design Volume detail
+  D.2  Internal loads   — mechanical loads from LDV startup surge
   E  Liquid levels       — LZLL → LZHH with heights and volumes
   F  Internals           — inlet device, baffles, demister, vortex breaker
   G  Nozzle schedule     — fabricator-relevant columns
@@ -980,6 +982,7 @@ def generate_datasheet_html(
     pn_label  = "PN" if code_key == "EN" else "Class"
     hydro_factor = 1.25 if code_key == "EN" else 1.43
     hydro_P   = P_barg * hydro_factor
+    CA_mm     = getattr(shell_res, "CA_mm", 3.0)
 
     # ── HEADER ───────────────────────────────────────────────────────────────
     proj_line = f"Project: {project_name}" if project_name else ""
@@ -1056,7 +1059,7 @@ def generate_datasheet_html(
         ("Design pressure",         f"{P_barg:.2f}  barg"),
         ("Design temperature",      f"{T_C:.0f}  °C"),
         ("Hydrostatic test pressure", f"{hydro_P:.2f}  barg  ({hydro_factor:.2f} × DP, {code_full})"),
-        ("Corrosion allowance",     "See mechanical design section"),
+        ("Corrosion allowance  CA",  f"{CA_mm:.1f}  mm"),
         ("Fluid service",           "Two-phase gas / liquid — non-fouling"),
     ))
 
@@ -1225,19 +1228,9 @@ def generate_datasheet_html(
     from engines import MATERIALS
     mat      = MATERIALS.get(mat_key, {})
     mat_name = mat.get("name", mat_key)
-    CA_mm    = getattr(shell_res, "CA_mm", 3.0)
     z_weld   = getattr(shell_res, "z",     1.0)
     z_label  = ("1.0  (full radiography)" if z_weld >= 1.0
                 else f"{z_weld:.2f}  (partial radiography)")
-
-    if weight_result is not None:
-        wt = weight_result
-        _w_sfx = "  (est. ±20 %, see D.2)"
-        _w_empty = f"{wt['m_dry_kg']:,.0f}  kg  ({wt['m_dry_kg']/1000:.2f} t){_w_sfx}"
-        _w_op    = f"{wt['m_operating_kg']:,.0f}  kg  ({wt['m_operating_kg']/1000:.2f} t){_w_sfx}"
-        _w_ht    = f"{wt['m_hydrotest_kg']:,.0f}  kg  ({wt['m_hydrotest_kg']/1000:.2f} t){_w_sfx}"
-    else:
-        _w_empty = _w_op = _w_ht = "TBD (vendor)"
 
     sec_c = _sec("C", "Mechanical Design", _kv(
         ("Inner diameter  Di",           f"{Di:,.0f}  mm"),
@@ -1256,12 +1249,10 @@ def generate_datasheet_html(
         ("Support type",                 "Saddle supports — 2 off"),
         ("Saddle position from tangent", f"{saddle_a_mm:.0f}  mm" if saddle_a_mm > 0 else "TBD"),
         ("Saddle width",                 f"{saddle_w_mm:.0f}  mm"),
-        ("Weight — empty",               _w_empty),
-        ("Weight — operating",           _w_op),
-        ("Weight — hydro test",          _w_ht),
     ))
 
     # Lining / surface treatment section (C.1 when specified)
+    _c1_used = False
     if lining_spec:
         ls = lining_spec
         lining_rows: list[tuple[str, str]] = []
@@ -1281,6 +1272,50 @@ def generate_datasheet_html(
             lining_rows.append(("Material / treatment notes", ls["free_text"]))
         if lining_rows:
             sec_c += _sec("C.1", "Internal Lining / Surface Treatment", _kv(*lining_rows))
+            _c1_used = True
+
+    # Weight estimate — end of mechanical design section
+    sec_c_weight = ""
+    if weight_result is not None:
+        wt = weight_result
+        _c_wt_label = "C.2" if _c1_used else "C.1"
+        _total_cw = max(wt["m_dry_kg"], 1.0)
+        def _wpct_cw(m): return f"{m / _total_cw * 100:.1f} %"
+        _wt_summary_c = _kv(
+            ("Dry weight",       f"<b>{wt['m_dry_kg']:,.0f}  kg  ({wt['m_dry_kg']/1000:.2f} t)</b>"),
+            ("Operating weight", f"<b>{wt['m_operating_kg']:,.0f}  kg  ({wt['m_operating_kg']/1000:.2f} t)</b>  "
+                                 f"[liquid at NLL: {wt['m_liquid_op_kg']:,.0f} kg]"),
+            ("Hydrotest weight", f"<b>{wt['m_hydrotest_kg']:,.0f}  kg  ({wt['m_hydrotest_kg']/1000:.2f} t)</b>  "
+                                 f"[water fill: {wt['m_water_ht_kg']:,.0f} kg]"),
+        )
+        _wt_breakdown_c = _dt(
+            ["Component", "Mass (kg)", "% of dry"],
+            [
+                ["Shell",            f"{wt['m_shell_kg']:,.0f}",    _wpct_cw(wt['m_shell_kg'])],
+                ["Heads × 2",        f"{wt['m_heads_kg']:,.0f}",    _wpct_cw(wt['m_heads_kg'])],
+                [f"Nozzles ({len(wt['nozzle_detail'])})",
+                                     f"{wt['m_nozzles_kg']:,.0f}",  _wpct_cw(wt['m_nozzles_kg'])],
+                ["Saddles × 2",      f"{wt['m_saddles_kg']:,.0f}",  _wpct_cw(wt['m_saddles_kg'])],
+                ["Internals",        f"{wt['m_internals_kg']:,.0f}",_wpct_cw(wt['m_internals_kg'])],
+                [f"Misc (+{wt['misc_factor']*100:.0f} %)",
+                                     f"{wt['m_misc_kg']:,.0f}",     f"{wt['misc_factor']*100:.0f} %"],
+                ["<b>Dry total</b>", f"<b>{wt['m_dry_kg']:,.0f}</b>", "<b>100 %</b>"],
+            ],
+        )
+        _wt_note_c = (
+            '<p style="font-size:0.82em;color:#64748b;margin-top:6px">'
+            "Estimate ±15–20 %. Shell and heads use nominal wall thickness. "
+            "Nozzles = pipe stub (300 mm) + one weld-neck flange each. "
+            "Saddles = plate-area estimate. Misc +5 % covers welds, paint, clips.</p>"
+        )
+        sec_c_weight = _sec(
+            _c_wt_label, "Weight Estimate",
+            f'<div style="display:flex;gap:16px;flex-wrap:wrap">'
+            f'{_panel("Summary", _wt_summary_c)}'
+            f'{_panel("Dry Weight Breakdown", _wt_breakdown_c)}'
+            f'</div>'
+            f'{_wt_note_c}',
+        )
 
     # ── D  SEPARATOR SIZING ───────────────────────────────────────────────────
     import math as _math
@@ -1329,38 +1364,6 @@ def generate_datasheet_html(
              "40 – 60 %",
              0.35 <= sep_res.nll_frac <= 0.65),
     ]
-    # LDV rows
-    if ldv_result is not None:
-        ldv = ldv_result
-        _has_target = ldv.get("target_m3") is not None
-        sizing_rows += [
-            _row("LDV — Segment A (VB → LZLL)",
-                 f"{ldv['seg_a_m3']*1000:.1f}  L  ({ldv['seg_a_m3']:.4f} m³)",
-                 f"VB = {ldv['eff_vb_mm']:.0f} mm  →  LZLL = {ldv['lzll_mm']:.0f} mm",
-                 ldv.get("seg_a_ok") if _has_target else None),
-            _row("LDV — Segment B (LZLL → LALL)",
-                 f"{ldv['seg_b_m3']*1000:.1f}  L  ({ldv['seg_b_m3']:.4f} m³)",
-                 f"LZLL = {ldv['lzll_mm']:.0f} mm  →  LALL = {ldv['lall_mm']:.0f} mm",
-                 ldv.get("seg_b_ok") if _has_target else None),
-        ]
-        if ldv.get("target_m3") is not None:
-            tgt_L    = ldv["target_m3"] * 1000
-            req_a_L  = (ldv.get("ldv_required_a_m3") or ldv.get("ldv_required_m3") or 0.0) * 1000
-            req_b_L  = (ldv.get("ldv_required_b_m3") or ldv.get("ldv_required_m3") or 0.0) * 1000
-            sizing_rows += [
-                _row("LDV Target  (before SF)  — downstream equipment volume",
-                     f"{tgt_L:.1f}  L  (input)",
-                     "User-specified required LDV",
-                     None),
-                _row(f"Seg A Required  (Target × SF {ldv['sf']:.2f})",
-                     f"{req_a_L:.1f}  L",
-                     "Requirement for Segment A check",
-                     None),
-                _row(f"Seg B Required  (Target × SF {ldv.get('sf_b', ldv['sf']):.2f})",
-                     f"{req_b_L:.1f}  L",
-                     "Requirement for Segment B check",
-                     None),
-            ]
     if inlet_nzs:
         _nz0 = inlet_nzs[0][0]
         _, _A0 = _bore(_nz0)
@@ -1387,7 +1390,61 @@ def generate_datasheet_html(
     sec_d = _sec("D", "Separator Sizing  (API 12J screening)",
                  _dt(["Criterion", "Actual", "Limit", "Status"], sizing_rows))
 
-    # ── D.1  INTERNALS MECHANICAL LOADS ──────────────────────────────────────
+    # ── D.1  LDV — LIQUID DESIGN VOLUME ─────────────────────────────────────
+    sec_d_ldv = ""
+    if ldv_result is not None:
+        ldv = ldv_result
+        _has_target = ldv.get("target_m3") is not None
+        _sf_b = ldv.get("sf_b", ldv["sf"])
+        _ldv_pairs: list[tuple[str, str]] = [
+            ("Effective vessel bottom (VB)",
+             f"{ldv['eff_vb_mm']:.0f} mm above vessel bottom"),
+            ("Safety factor — Seg A", f"{ldv['sf']:.2f}"),
+            ("Safety factor — Seg B", f"{_sf_b:.2f}"),
+        ]
+        if _has_target:
+            _req_a = (ldv.get("ldv_required_a_m3") or ldv.get("ldv_required_m3") or 0.0)
+            _req_b = (ldv.get("ldv_required_b_m3") or ldv.get("ldv_required_m3") or 0.0)
+            _ldv_pairs += [
+                ("Required LDV (before SF)",
+                 f"{ldv['target_m3']*1000:.1f} L  ({ldv['target_m3']:.4f} m³)"),
+                ("", ""),
+                ("Segment A (VB → LZLL)",
+                 f"{ldv['seg_a_m3']*1000:.1f} L  ({ldv['seg_a_m3']:.4f} m³)"),
+                (f"Seg A Required  (Target × SF {ldv['sf']:.2f})",
+                 f"{_req_a*1000:.1f} L  ({_req_a:.4f} m³)"),
+                ("Segment A ≥ Required?",
+                 "<b>✓ PASS</b>" if ldv.get("seg_a_ok") else "<b>✗ FAIL</b>"),
+                ("", ""),
+                ("Segment B (LZLL → LALL)",
+                 f"{ldv['seg_b_m3']*1000:.1f} L  ({ldv['seg_b_m3']:.4f} m³)"),
+                (f"Seg B Required  (Target × SF {_sf_b:.2f})",
+                 f"{_req_b*1000:.1f} L  ({_req_b:.4f} m³)"),
+                ("Segment B ≥ Required?",
+                 "<b>✓ PASS</b>" if ldv.get("seg_b_ok") else "<b>✗ FAIL</b>"),
+                ("", ""),
+                ("Both segments adequate?",
+                 "<b>✓ PASS</b>" if ldv.get("ok") else "<b>✗ FAIL</b>"),
+            ]
+        else:
+            _ldv_pairs += [
+                ("Segment A (VB → LZLL)",
+                 f"{ldv['seg_a_m3']*1000:.1f} L  ({ldv['seg_a_m3']:.4f} m³)"),
+                ("Segment B (LZLL → LALL)",
+                 f"{ldv['seg_b_m3']*1000:.1f} L  ({ldv['seg_b_m3']:.4f} m³)"),
+                ("Note", "Specify an LDV target to see pass/fail checks."),
+            ]
+        _ldv_note = (
+            '<p style="font-size:0.82em;color:#64748b;margin-top:6px">'
+            "Minimum liquid inventory required to fill downstream equipment that are partially "
+            "empty during operation or startup. Volumes include full vessel geometry "
+            "(cylinder + both endcaps). Two independent checks: "
+            "Segment A (VB → LZLL) ≥ LDV×SF  and  Segment B (LZLL → LALL) ≥ LDV×SF.</p>"
+        )
+        sec_d_ldv = _sec("D.1", "LDV — Liquid Design Volume",
+                         _kv(*_ldv_pairs) + _ldv_note)
+
+    # ── D.2  INTERNALS MECHANICAL LOADS ──────────────────────────────────────
     sec_d1 = ""
     if int_loads_result is not None:
         il = int_loads_result
@@ -1438,54 +1495,13 @@ def generate_datasheet_html(
             'No standard prescribes this method — verify per project structural code.</p>'
         )
         sec_d1 = _sec(
-            "D.1",
+            "D.2",
             "Internals — Mechanical Loads  (LDV Startup Surge)",
             f'<div style="display:flex;gap:16px;flex-wrap:wrap">'
             f'{_panel("Inlet Device (per inlet)", _inlet_kv)}'
             f'{_panel("Baffle Plate (per baffle, full circumferential weld)", _baffle_kv)}'
             f'</div>'
             f'{_note}',
-        )
-
-    # ── D.2  WEIGHT ESTIMATE ─────────────────────────────────────────────────
-    sec_d2 = ""
-    if weight_result is not None:
-        wt = weight_result
-        _total = max(wt["m_dry_kg"], 1.0)
-        def _wpct(m):
-            return f"{m / _total * 100:.1f} %"
-        _wt_summary = _kv(
-            ("Dry weight",       f"<b>{wt['m_dry_kg']:,.0f}  kg  ({wt['m_dry_kg']/1000:.2f} t)</b>"),
-            ("Operating weight", f"<b>{wt['m_operating_kg']:,.0f}  kg  ({wt['m_operating_kg']/1000:.2f} t)</b>"),
-            ("Hydrotest weight", f"<b>{wt['m_hydrotest_kg']:,.0f}  kg  ({wt['m_hydrotest_kg']/1000:.2f} t)</b>"),
-        )
-        _wt_breakdown = _dt(
-            ["Component", "Mass (kg)", "% of dry"],
-            [
-                ["Shell",            f"{wt['m_shell_kg']:,.0f}",    _wpct(wt['m_shell_kg'])],
-                [f"Heads × 2",       f"{wt['m_heads_kg']:,.0f}",    _wpct(wt['m_heads_kg'])],
-                [f"Nozzles ({len(wt['nozzle_detail'])})",
-                                     f"{wt['m_nozzles_kg']:,.0f}",  _wpct(wt['m_nozzles_kg'])],
-                ["Saddles × 2",      f"{wt['m_saddles_kg']:,.0f}",  _wpct(wt['m_saddles_kg'])],
-                ["Internals",        f"{wt['m_internals_kg']:,.0f}",_wpct(wt['m_internals_kg'])],
-                [f"Misc (+{wt['misc_factor']*100:.0f} %)",
-                                     f"{wt['m_misc_kg']:,.0f}",     f"{wt['misc_factor']*100:.0f} %"],
-                ["<b>Dry total</b>", f"<b>{wt['m_dry_kg']:,.0f}</b>", "<b>100 %</b>"],
-            ],
-        )
-        _wt_note = (
-            '<p style="font-size:0.82em;color:#64748b;margin-top:6px">'
-            "Estimate ±15–20 %. Shell and heads use nominal wall thickness. "
-            "Nozzles = pipe stub (300 mm) + one weld-neck flange each. "
-            "Saddles = plate-area estimate. Misc +5 % covers welds, paint, clips.</p>"
-        )
-        sec_d2 = _sec(
-            "D.2", "Weight Estimate",
-            f'<div style="display:flex;gap:16px;flex-wrap:wrap">'
-            f'{_panel("Summary", _wt_summary)}'
-            f'{_panel("Dry Weight Breakdown", _wt_breakdown)}'
-            f'</div>'
-            f'{_wt_note}',
         )
 
     # ── E  LIQUID LEVELS ──────────────────────────────────────────────────────
@@ -1686,7 +1702,8 @@ def generate_datasheet_html(
 
     body = (
         header_html + banner + sketch_html
-        + sec_a + sec_b + sec_c + sec_d + sec_d1 + sec_d2
+        + sec_a + sec_b + sec_c + sec_c_weight
+        + sec_d + sec_d_ldv + sec_d1
         + sec_e + sec_f + sec_g + sec_g1 + sec_h
         + footer
     )

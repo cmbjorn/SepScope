@@ -9,6 +9,8 @@ Structure
   C          — Mechanical design (geometry, calculated thicknesses, material)
   C.1        — Shell thickness calculation narrative
   C.2        — Head thickness calculation narrative
+  C.3        — Internal Lining / Surface Treatment (when applicable)
+  C.3 or C.4 — Weight estimate (end of mechanical design)
   D          — Separator sizing (API 12J screening table)
   D.1        — LDV — Liquid Design Volume (when applicable)
   E          — Liquid levels & volumes
@@ -604,6 +606,7 @@ def generate_word_report(
             _caption(doc, f"⚠  {w}")
 
     # C.3 — Internal lining / surface treatment
+    _c3_used = False
     if lining_spec:
         ls = lining_spec
         lining_pairs: list[tuple[str, str]] = []
@@ -628,6 +631,45 @@ def generate_word_report(
         if lining_pairs:
             _sub_heading(doc, "C.3  Internal Lining / Surface Treatment")
             _kv_table(doc, lining_pairs)
+            _c3_used = True
+
+    # C.3 or C.4 — Weight estimate (end of mechanical design section)
+    if weight_result is not None:
+        wt = weight_result
+        _c_wt_sub = "C.4" if _c3_used else "C.3"
+        _sub_heading(doc, f"{_c_wt_sub}  Weight Estimate")
+        _caption(doc,
+                 "Estimated weights ±15–20 %. Shell and heads use nominal wall thickness. "
+                 "Nozzle weight = pipe stub (300 mm projection) + one weld-neck flange per nozzle. "
+                 "Saddle weight from plate-area estimate. Misc +5 % covers welds, paint, support clips.")
+        _total_w = max(wt["m_dry_kg"], 1.0)
+        def _wpct_w(m): return f"{m / _total_w * 100:.1f} %"
+        _kv_table(doc, [
+            ("Dry weight",
+             f"{wt['m_dry_kg']:,.0f} kg  ({wt['m_dry_kg']/1000:.2f} t)"),
+            ("Operating weight",
+             f"{wt['m_operating_kg']:,.0f} kg  ({wt['m_operating_kg']/1000:.2f} t)  "
+             f"[liquid at NLL: {wt['m_liquid_op_kg']:,.0f} kg]"),
+            ("Hydrotest weight",
+             f"{wt['m_hydrotest_kg']:,.0f} kg  ({wt['m_hydrotest_kg']/1000:.2f} t)  "
+             f"[water fill: {wt['m_water_ht_kg']:,.0f} kg]"),
+        ])
+        _sub_heading(doc, "Dry weight breakdown")
+        _data_table(doc,
+            ["Component", "Mass (kg)", "% of dry"],
+            [
+                ["Shell",               f"{wt['m_shell_kg']:,.0f}",    _wpct_w(wt['m_shell_kg'])],
+                ["Heads × 2",           f"{wt['m_heads_kg']:,.0f}",    _wpct_w(wt['m_heads_kg'])],
+                [f"Nozzles ({len(wt['nozzle_detail'])})",
+                                         f"{wt['m_nozzles_kg']:,.0f}", _wpct_w(wt['m_nozzles_kg'])],
+                ["Saddles × 2",         f"{wt['m_saddles_kg']:,.0f}",  _wpct_w(wt['m_saddles_kg'])],
+                ["Internals",           f"{wt['m_internals_kg']:,.0f}",_wpct_w(wt['m_internals_kg'])],
+                [f"Misc (+{wt['misc_factor']*100:.0f} %)",
+                                         f"{wt['m_misc_kg']:,.0f}",   f"{wt['misc_factor']*100:.0f} %"],
+                ["Total dry",           f"{wt['m_dry_kg']:,.0f}",      "100 %"],
+            ],
+            col_w=[6.0, 3.5, 3.0],
+        )
 
     # ── D — Separator Sizing ──────────────────────────────────────────────────
     doc.add_page_break()
@@ -775,44 +817,6 @@ def generate_word_report(
             ("Weld perimeter", f"{il['L_weld_m']*1000:.0f} mm  (full circumference)"),
             ("Material f_d / f_y", f"{il['fd_MPa']:.0f} MPa / {il['fy_MPa']:.0f} MPa"),
         ])
-
-    # D.3 — Weight estimate
-    if weight_result is not None:
-        wt = weight_result
-        _sub_heading(doc, "D.3  Weight Estimate")
-        _caption(doc,
-                 "Estimated weights ±15–20 %. Shell and heads use nominal wall thickness. "
-                 "Nozzle weight = pipe stub (300 mm projection) + one weld-neck flange per nozzle. "
-                 "Saddle weight from plate-area estimate. Misc +5 % covers welds, paint, support clips.")
-        _total = max(wt["m_dry_kg"], 1.0)
-        def _wpct(m):
-            return f"{m / _total * 100:.1f} %"
-        _kv_table(doc, [
-            ("Dry weight",
-             f"{wt['m_dry_kg']:,.0f} kg  ({wt['m_dry_kg']/1000:.2f} t)"),
-            ("Operating weight",
-             f"{wt['m_operating_kg']:,.0f} kg  ({wt['m_operating_kg']/1000:.2f} t)  "
-             f"[liquid at NLL: {wt['m_liquid_op_kg']:,.0f} kg]"),
-            ("Hydrotest weight",
-             f"{wt['m_hydrotest_kg']:,.0f} kg  ({wt['m_hydrotest_kg']/1000:.2f} t)  "
-             f"[water fill: {wt['m_water_ht_kg']:,.0f} kg]"),
-        ])
-        _sub_heading(doc, "Dry weight breakdown")
-        _data_table(doc,
-            ["Component", "Mass (kg)", "% of dry"],
-            [
-                ["Shell",               f"{wt['m_shell_kg']:,.0f}",    _wpct(wt['m_shell_kg'])],
-                ["Heads × 2",           f"{wt['m_heads_kg']:,.0f}",    _wpct(wt['m_heads_kg'])],
-                [f"Nozzles ({len(wt['nozzle_detail'])})",
-                                         f"{wt['m_nozzles_kg']:,.0f}", _wpct(wt['m_nozzles_kg'])],
-                ["Saddles × 2",         f"{wt['m_saddles_kg']:,.0f}",  _wpct(wt['m_saddles_kg'])],
-                ["Internals",           f"{wt['m_internals_kg']:,.0f}",_wpct(wt['m_internals_kg'])],
-                [f"Misc (+{wt['misc_factor']*100:.0f} %)",
-                                         f"{wt['m_misc_kg']:,.0f}",   f"{wt['misc_factor']*100:.0f} %"],
-                ["Total dry",           f"{wt['m_dry_kg']:,.0f}",      "100 %"],
-            ],
-            col_w=[6.0, 3.5, 3.0],
-        )
 
     # ── E — Liquid Levels ─────────────────────────────────────────────────────
     _section_heading(doc, "E", "Liquid Levels & Volumes")
