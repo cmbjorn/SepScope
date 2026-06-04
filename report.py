@@ -1230,6 +1230,15 @@ def generate_datasheet_html(
     z_label  = ("1.0  (full radiography)" if z_weld >= 1.0
                 else f"{z_weld:.2f}  (partial radiography)")
 
+    if weight_result is not None:
+        wt = weight_result
+        _w_sfx = "  (est. ±20 %, see D.2)"
+        _w_empty = f"{wt['m_dry_kg']:,.0f}  kg  ({wt['m_dry_kg']/1000:.2f} t){_w_sfx}"
+        _w_op    = f"{wt['m_operating_kg']:,.0f}  kg  ({wt['m_operating_kg']/1000:.2f} t){_w_sfx}"
+        _w_ht    = f"{wt['m_hydrotest_kg']:,.0f}  kg  ({wt['m_hydrotest_kg']/1000:.2f} t){_w_sfx}"
+    else:
+        _w_empty = _w_op = _w_ht = "TBD (vendor)"
+
     sec_c = _sec("C", "Mechanical Design", _kv(
         ("Inner diameter  Di",           f"{Di:,.0f}  mm"),
         ("Shell length  T–T",            f"{L_shell:,.0f}  mm"),
@@ -1247,9 +1256,9 @@ def generate_datasheet_html(
         ("Support type",                 "Saddle supports — 2 off"),
         ("Saddle position from tangent", f"{saddle_a_mm:.0f}  mm" if saddle_a_mm > 0 else "TBD"),
         ("Saddle width",                 f"{saddle_w_mm:.0f}  mm"),
-        ("Weight — empty",               "TBD (vendor)"),
-        ("Weight — operating",           "TBD (vendor)"),
-        ("Weight — hydro test",          "TBD (vendor)"),
+        ("Weight — empty",               _w_empty),
+        ("Weight — operating",           _w_op),
+        ("Weight — hydro test",          _w_ht),
     ))
 
     # Lining / surface treatment section (C.1 when specified)
@@ -1491,32 +1500,45 @@ def generate_datasheet_html(
     }
     _order = ["LZLL", "LALL", "LAL", "NLL", "LAH", "LAHH", "LZHH"]
 
-    # Full vessel volume for % calculation
+    # Full vessel volume (incl. heads) for % calculation
     V_total = sep_res.V_total_vessel_m3 if sep_res.V_total_vessel_m3 > 0 else 1.0
 
-    # Compute volumes for each level using the cylindrical approximation
-    # (heads are included via V_total from the engine's passed value)
+    # Compute full vessel volumes (cylinder + both endcaps) at each level
+    from engines.vessel_volume import vessel_volumes as _vessel_volumes
     from engines.separator_process import _cyl_vol_mm3
+    _lvl_tags = [t for t in _order if t in levels_mm]
+    if head_type is not None and _lvl_tags:
+        _vr = _vessel_volumes(
+            head_type, Di, L_shell,
+            {t: levels_mm[t] for t in _lvl_tags},
+            crown_ratio=crown_ratio, knuckle_ratio=knuckle_ratio,
+            alpha_deg_cone=alpha_deg_cone, ellipse_ratio=ellipse_ratio,
+            include_heads=True,
+        )
+        _lvols = {r["tag"]: r["vol_m3"] for r in _vr["levels"]}
+    else:
+        _lvols = {}
+
     level_rows = []
     for tag in _order:
         if tag not in levels_mm:
             continue
         h = max(0.0, min(Di, levels_mm[tag]))
-        vol_cyl = _cyl_vol_mm3(Di, L_shell, h) * 1e-9  # m³ cylindrical only
-        vol_pct = vol_cyl / max(V_total, 1e-9) * 100
+        vol = _lvols.get(tag, _cyl_vol_mm3(Di, L_shell, h) * 1e-9)
+        vol_pct = vol / max(V_total, 1e-9) * 100
         level_rows.append([
             f"<b>{tag}</b>",
             _desc.get(tag, ""),
             f"{h:.0f}",
             f"{h/Di*100:.0f} %",
-            f"{vol_cyl:.3f}",
-            f"{vol_cyl*1000:.0f}",
+            f"{vol:.3f}",
+            f"{vol*1000:.0f}",
         ])
 
     sec_e = _sec("E", "Liquid Levels",
                  _dt(
                      ["Tag", "Description", "Height from bottom  (mm)",
-                      "% Di", "Vol – cyl. zone  (m³)", "Vol  (L)"],
+                      "% Di", "Volume  (m³)", "Volume  (L)"],
                      level_rows,
                  ))
 

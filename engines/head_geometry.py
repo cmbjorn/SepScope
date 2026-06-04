@@ -216,17 +216,20 @@ def head_thickness(
     warnings: list[str] = []
 
     if head_type == HeadType.HEMISPHERICAL:
-        # EN 13445-3 cl. 7.4 / ASME UG-32(f)
-        # t = P * Di / (4 * fd * z - P)   (inside radius form)
+        # EN 13445-3 cl. 7.4: e = P·Ri / (2·fd·z − P), Ri = Di/2
+        #   → e = P·Di / (4·fd·z − 2·P)
+        # ASME UG-32(f): t = P·R / (2·S·E − 0.2·P), R = Di/2
         if code == "ASME":
-            # ASME UG-32(f): t = P*R/(2*S*E - 0.2*P), R = Di/2
             R = Di / 2
             t = P * R / (2 * fd_MPa * z - 0.2 * P)
-            clause = "ASME VIII-1 UG-32(f)"
+            clause  = "ASME VIII-1 UG-32(f)"
+            formula = (f"t = P·R / (2·S·E − 0.2·P) = "
+                       f"{P:.3f}·{Di/2:.1f} / (2·{fd_MPa:.2f}·{z:.2f} − 0.2·{P:.3f})")
         else:
-            t = P * Di / (4 * fd_MPa * z - P)
-            clause = "EN 13445-3 cl. 7.4"
-        formula = f"t = P·Di / (4·fd·z − P) = {P:.3f}·{Di:.1f} / (4·{fd_MPa:.2f}·{z:.2f} − {P:.3f})"
+            t = P * Di / (4 * fd_MPa * z - 2 * P)   # Ri=Di/2 substituted
+            clause  = "EN 13445-3 cl. 7.4"
+            formula = (f"t = P·Di / (4·fd·z − 2·P) = "
+                       f"{P:.3f}·{Di:.1f} / (4·{fd_MPa:.2f}·{z:.2f} − 2·{P:.3f})")
 
     elif head_type == HeadType.ELLIPSOIDAL:
         # Equivalent sphere method: treat as torispherical with R = K*Di

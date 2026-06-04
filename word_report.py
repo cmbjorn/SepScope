@@ -826,26 +826,38 @@ def generate_word_report(
         "LAHH": "High-high liquid level — high-high shutdown / surge basis",
         "LZHH": "High-high-high liquid level — overfill / trip",
     }
+    from engines.vessel_volume import vessel_volumes as _vessel_volumes
     from engines.separator_process import _cyl_vol_mm3
     V_total = sep_res.V_total_vessel_m3 if sep_res.V_total_vessel_m3 > 0 else 1.0
+    _lvl_tags_w = [t for t in _level_order if t in levels_mm]
+    if head_type is not None and _lvl_tags_w:
+        _vr_w = _vessel_volumes(
+            head_type, Di, L_shell,
+            {t: levels_mm[t] for t in _lvl_tags_w},
+            crown_ratio=crown_ratio, knuckle_ratio=knuckle_ratio,
+            alpha_deg_cone=alpha_deg_cone, ellipse_ratio=ellipse_ratio,
+            include_heads=True,
+        )
+        _lvols_w = {r["tag"]: r["vol_m3"] for r in _vr_w["levels"]}
+    else:
+        _lvols_w = {}
+
     level_rows = []
     for tag in _level_order:
         if tag not in levels_mm:
             continue
         h = max(0.0, min(Di, levels_mm[tag]))
-        vol_cyl = _cyl_vol_mm3(Di, L_shell, h) * 1e-9
+        vol = _lvols_w.get(tag, _cyl_vol_mm3(Di, L_shell, h) * 1e-9)
         level_rows.append([
             tag, _level_desc.get(tag, ""),
             f"{h:.0f}", f"{h/Di*100:.1f}",
-            f"{vol_cyl:.3f}", f"{vol_cyl*1000:.0f}",
+            f"{vol:.3f}", f"{vol*1000:.0f}",
         ])
     _data_table(doc,
                 ["Tag", "Description", "Height (mm)", "% Di",
-                 "Vol – cyl. zone (m³)", "Vol (L)"],
+                 "Volume (m³)", "Volume (L)"],
                 level_rows,
                 col_w=[1.5, 6.5, 2.0, 1.5, 3.0, 2.0])
-    _caption(doc, "Volumes are cylindrical zone only. Full vessel volumes (incl. endcaps) "
-                  "are shown in the LDV section and the volume calculator in the application.")
 
     # ── F — Internals ─────────────────────────────────────────────────────────
     _section_heading(doc, "F", "Internals")
