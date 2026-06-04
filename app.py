@@ -2208,6 +2208,26 @@ def main():
 
         # ── Separator settings ────────────────────────────────────────────────
         st.markdown("**API 12J sizing criteria**")
+
+        # Service condition — drives K recommendation (API 12J Table 2-2 / GPSA)
+        _SVC_CONDITIONS = [
+            "Non-foaming / clean",
+            "Slightly foaming or dirty",
+            "Moderately foaming",
+            "Severely foaming",
+        ]
+        # K ranges [min, max] for [without pad, with pad]
+        _K_RANGES = {
+            "Non-foaming / clean":       ([0.04, 0.07], [0.10, 0.12]),
+            "Slightly foaming or dirty": ([0.03, 0.05], [0.07, 0.09]),
+            "Moderately foaming":        ([0.02, 0.04], [0.05, 0.07]),
+            "Severely foaming":          ([0.01, 0.03], [0.03, 0.05]),
+        }
+        svc_condition = st.selectbox(
+            "Service condition", _SVC_CONDITIONS, key="svc_condition",
+            help="API 12J Table 2-2 / GPSA guidance. Sets recommended K range.",
+        )
+
         if not has_meshpad:
             K_sb = st.number_input(
                 "Souders-Brown K (open vessel, m/s)", min_value=0.01, max_value=0.5,
@@ -2217,6 +2237,30 @@ def main():
         else:
             K_sb = K_pad   # mesh pad K overrides
             st.caption(f"Gas velocity check uses mesh pad K = {K_pad:.2f} m/s")
+
+        # K recommendation vs entered value
+        _k_lo, _k_hi = _K_RANGES[svc_condition][1 if has_meshpad else 0]
+        _k_active = K_sb
+        _k_note = (f"Recommended K for **{svc_condition}** "
+                   f"({'with pad' if has_meshpad else 'open vessel'}): "
+                   f"**{_k_lo:.2f} – {_k_hi:.2f} m/s**")
+        if _k_active > _k_hi * 1.05:
+            st.warning(f"⚠ K = {_k_active:.2f} m/s is above the recommended upper limit "
+                       f"({_k_hi:.2f} m/s) for {svc_condition} service. "
+                       f"Consider derating or confirming with vendor test data.", icon="⚠️")
+        elif _k_active < _k_lo * 0.80:
+            st.info(f"ℹ K = {_k_active:.2f} m/s is below the typical lower end "
+                    f"({_k_lo:.2f} m/s) for {svc_condition} service — conservative.", icon="ℹ️")
+        else:
+            st.caption(_k_note)
+
+        # High-pressure derating note (above ~35 barg density effects are significant)
+        if P_barg > 35:
+            _derate_pct = min(int((P_barg - 35) / 35 * 10), 30)
+            st.caption(
+                f"ℹ High-pressure service ({P_barg:.0f} barg) — consider derating K by "
+                f"~{_derate_pct} % for increased gas density (API 12J §2.3)."
+            )
         t_holdup_req = st.number_input(
             "Required hold-up time (min)", min_value=0.5, max_value=60.0,
             value=3.0, step=0.5, key="t_holdup_req",
@@ -2239,6 +2283,13 @@ def main():
                 help="Time to fill from NLL to LAHH at full liquid flow rate. "
                      "Represents the operator/control-system response window. Typical: 2–5 min.",
             )
+
+        td_pct = st.slider(
+            "Turndown basis (%)", min_value=25, max_value=75, value=50, step=5,
+            key="td_pct",
+            help="Flow fraction used for turndown analysis. "
+                 "All gas and liquid flows scale by this fraction.",
+        )
 
         st.divider()
         st.markdown("**LDV — Liquid Design Volume**")
@@ -3025,6 +3076,81 @@ def main():
         V_total_vessel_m3=vol_res["total_m3"],
     )
 
+    # ── Pre-compute display values used in sizing expander and turndown ─────────
+    import math as _math
+    _delta_rho_sep = max(0.0, rho_liq - rho_gas)
+    _rho_mix_sep   = ((rho_gas * Q_gas_m3h + rho_liq * Q_liq_m3h)
+                      / max(Q_gas_m3h + Q_liq_m3h, 1e-9))
+
+    # Mesh pad load at design
+    _pad_load_pct: float | None = None
+    _pad_ok: bool | None = None
+    if has_meshpad:
+        _U_pad_max   = K_pad * _math.sqrt(_delta_rho_sep / max(rho_gas, 0.001))
+        _A_pad_req   = (Q_gas_m3h / 3600.0) / max(_U_pad_max, 1e-9)
+        _A_pad_avail = sep_res.A_gas_m2
+        _pad_load_pct = _A_pad_req / max(_A_pad_avail, 1e-9) * 100
+        _pad_ok      = _A_pad_req <= _A_pad_avail
+
+    # Inlet ρv² at design
+    _inlet_nz_list = [nz for nz, *_ in nozzle_results if nz.get("service") == "Inlet"]
+    _rho_v2_design: float | None = None
+    _rv2_design_ok: bool | None = None
+    _v_in_design:   float | None = None
+    if _inlet_nz_list:
+        _nz0d = _inlet_nz_list[0]
+        _OD0d = NOZZLE_OD.get(_nz0d["dn"], _nz0d["dn"] * 1.05)
+        _rec0d = recommended_schedule(_nz0d.get("pn", 25), code_key)
+        _t0d   = float(NOZZLE_WALL_SCH[_rec0d].get(_nz0d["dn"], NOZZLE_WALL_T.get(_nz0d["dn"], 8.0)))
+        _ID0d  = max(_OD0d - 2 * _t0d, 1.0)
+        _A0d   = _math.pi * (_ID0d * 1e-3) ** 2 / 4.0
+        _Q_mix_per = (Q_gas_m3h + Q_liq_m3h) / n_inlets / 3600.0
+        _v_in_design   = _Q_mix_per / max(_A0d, 1e-9)
+        _rho_v2_design = _rho_mix_sep * _v_in_design ** 2
+        _rv2_design_ok = _rho_v2_design <= 2400.0
+
+    # Turndown result dict
+    _td_frac = td_pct / 100.0
+    _U_reentrain = sep_res.U_max_ms * 1.15
+    _U_act_td    = sep_res.U_act_ms * _td_frac
+    _turndown_result = {
+        "pct":              td_pct,
+        "frac":             _td_frac,
+        "U_act_ms":         sep_res.U_act_ms,
+        "U_max_ms":         sep_res.U_max_ms,
+        "U_reentrain_ms":   _U_reentrain,
+        "U_act_td_ms":      _U_act_td,
+        "gas_vel_ok":       sep_res.gas_velocity_ok,
+        "gas_vel_td_ok":    _U_act_td <= sep_res.U_max_ms,
+        "gas_drain_warn":   _U_act_td < sep_res.U_max_ms * 0.30,
+        "gas_reentrain_ok": sep_res.U_act_ms <= _U_reentrain,
+        "has_meshpad":      has_meshpad,
+        "pad_load_pct":     _pad_load_pct,
+        "pad_td_pct":       (_pad_load_pct * _td_frac) if _pad_load_pct is not None else None,
+        "pad_ok":           _pad_ok,
+        "pad_td_ok":        ((_pad_load_pct * _td_frac) <= 100.0) if _pad_load_pct is not None else None,
+        "pad_drain_warn":   (_U_act_td < sep_res.U_max_ms * 0.30) if has_meshpad else False,
+        "t_holdup_s":       sep_res.t_holdup_s,
+        "t_holdup_td_s":    sep_res.t_holdup_s / _td_frac,
+        "holdup_ok":        sep_res.holdup_ok,
+        "holdup_td_ok":     (sep_res.t_holdup_s / _td_frac) >= t_holdup_req * 60,
+        "t_holdup_req_min": t_holdup_req,
+        "t_surge_s":        sep_res.t_surge_s,
+        "t_surge_td_s":     sep_res.t_surge_s / _td_frac,
+        "surge_ok":         sep_res.surge_ok if include_surge_check else None,
+        "surge_td_ok":      ((sep_res.t_surge_s / _td_frac) >= t_surge_req * 60
+                             if include_surge_check else None),
+        "t_surge_req_min":  t_surge_req,
+        "include_surge":    include_surge_check,
+        "rv2_pa":           _rho_v2_design,
+        "rv2_td_pa":        (_rho_v2_design * _td_frac ** 2) if _rho_v2_design is not None else None,
+        "rv2_ok":           _rv2_design_ok,
+        "rv2_td_ok":        ((_rho_v2_design * _td_frac ** 2 <= 2400.0)
+                             if _rho_v2_design is not None else None),
+        "K_sb":             K_sb,
+        "svc_condition":    svc_condition,
+    }
+
     # ── Internal mechanical loads (LDV startup surge) ─────────────────────────
     _int_loads: dict | None = None
     if _ldv_result is not None and has_baffles:
@@ -3139,7 +3265,6 @@ def main():
             )
 
     with st.expander("**Separator sizing (API 12J screening)**", expanded=True):
-        import math as _math
         sc1, sc2, sc3 = st.columns(3)
 
         # ── Col 1: Gas capacity (Souders-Brown + mesh pad) ────────────────────
@@ -3153,24 +3278,20 @@ def main():
             delta_color="normal" if sep_res.gas_velocity_ok else "inverse",
         )
         sc1.caption(
-            f"Max = K × √(Δρ/ρ_g) = {sep_res.U_max_ms:.3f} m/s  "
-            f"(K = {K_sb:.2f} m/s, {'mesh pad' if has_meshpad else 'open vessel'})"
+            f"Max (separation) = {sep_res.U_max_ms:.3f} m/s  "
+            f"·  Re-entrainment limit = {_turndown_result['U_reentrain_ms']:.3f} m/s  "
+            f"(1.15 × K, {'mesh pad' if has_meshpad else 'open vessel'})"
         )
+        if not _turndown_result["gas_reentrain_ok"]:
+            sc1.error("Gas velocity exceeds re-entrainment limit (1.15 × K) — "
+                      "liquid carry-over to gas outlet expected.", icon="🚫")
 
         if has_meshpad:
-            # Mesh pad sees full Q_gas (both zones converge at the outlet)
-            delta_rho_mp = max(0.0, rho_liq - rho_gas)
-            U_pad_max   = K_pad * _math.sqrt(delta_rho_mp / max(rho_gas, 0.001))
-            A_pad_req   = (Q_gas_m3h / 3600.0) / max(U_pad_max, 1e-9)
-            A_pad_avail = sep_res.A_gas_m2
-            pad_load    = A_pad_req / max(A_pad_avail, 1e-9) * 100
-            pad_ok      = A_pad_req <= A_pad_avail
-            sc1.metric("Mesh pad load (full Q_gas)", f"{pad_load:.0f} %",
-                       delta="OK" if pad_ok else "UNDERSIZED",
-                       delta_color="normal" if pad_ok else "inverse")
+            sc1.metric("Mesh pad load (full Q_gas)", f"{_pad_load_pct:.0f} %",
+                       delta="OK" if _pad_ok else "UNDERSIZED",
+                       delta_color="normal" if _pad_ok else "inverse")
             sc1.caption(
-                f"Pad area req. {A_pad_req:.3f} m²  /  avail. {A_pad_avail:.3f} m²  "
-                f"·  K_pad = {K_pad:.2f} m/s"
+                f"Pad area avail. {sep_res.A_gas_m2:.3f} m²  ·  K_pad = {K_pad:.2f} m/s"
             )
 
         sc1.markdown("**Droplet / bubble cut sizes**")
@@ -3222,32 +3343,16 @@ def main():
                    delta="OK (3–5)" if ld_ok else ("TOO SHORT" if ld < 3 else "VERY LONG"),
                    delta_color="normal" if ld_ok else "inverse")
 
-        # Inlet nozzle ρv² — API RP 14E / GPSA limit 2 400 Pa (non-erosive service)
-        _RHO_V2_LIMIT = 2400.0  # Pa
-        inlet_nozzles = [
-            nz for nz, _, _, _, _ in nozzle_results
-            if nz.get("service") == "Inlet"
-        ]
-        if inlet_nozzles:
-            _Q_mix_per_m3s = (Q_gas_m3h + Q_liq_m3h) / n_inlets / 3600.0
-            _rho_mix = (rho_gas * Q_gas_m3h + rho_liq * Q_liq_m3h) / max(Q_gas_m3h + Q_liq_m3h, 1e-9)
-            # Use first inlet nozzle for representative size
-            _nz0 = inlet_nozzles[0]
-            _OD  = NOZZLE_OD.get(_nz0["dn"], _nz0["dn"] * 1.05)
-            _rec = recommended_schedule(_nz0.get("pn", 25), code_key)
-            _t   = float(NOZZLE_WALL_SCH[_rec].get(_nz0["dn"], NOZZLE_WALL_T.get(_nz0["dn"], 8.0)))
-            _ID  = max(_OD - 2 * _t, 1.0)
-            _A_nz = _math.pi * (_ID * 1e-3) ** 2 / 4.0
-            _v_in = _Q_mix_per_m3s / max(_A_nz, 1e-9)
-            _rho_v2 = _rho_mix * _v_in ** 2
-            _rv2_ok = _rho_v2 <= _RHO_V2_LIMIT
+        # Inlet nozzle ρv² — use pre-computed values
+        if _rho_v2_design is not None:
+            _nz0 = _inlet_nz_list[0]
             sc3.metric(f"Inlet nozzle ρv² (DN{_nz0['dn']})",
-                       f"{_rho_v2:,.0f} Pa",
-                       delta=f"{'OK' if _rv2_ok else 'EXCEEDS 2 400 Pa'} — limit {_RHO_V2_LIMIT:.0f} Pa",
-                       delta_color="normal" if _rv2_ok else "inverse")
+                       f"{_rho_v2_design:,.0f} Pa",
+                       delta=f"{'OK' if _rv2_design_ok else 'EXCEEDS 2 400 Pa'} — limit 2 400 Pa",
+                       delta_color="normal" if _rv2_design_ok else "inverse")
             sc3.caption(
-                f"v_in = {_v_in:.2f} m/s  ·  ρ_mix = {_rho_mix:.1f} kg/m³  "
-                f"·  bore ID = {_ID:.0f} mm  (API RP 14E)"
+                f"v_in = {_v_in_design:.2f} m/s  ·  ρ_mix = {_rho_mix_sep:.1f} kg/m³  "
+                f"(API RP 14E)"
             )
 
         sc3.markdown("**Liquid inventory (incl. heads)**")
@@ -3317,6 +3422,80 @@ def main():
                 )
                 st.dataframe(pd.DataFrame(_cz_rows), hide_index=True,
                              use_container_width=True)
+
+        # ── Turndown analysis ─────────────────────────────────────────────────
+        td = _turndown_result
+        st.divider()
+        st.markdown(f"**Turndown analysis — {td['pct']} % of design flow**")
+
+        def _td_status(ok):
+            if ok is True:   return "✓"
+            if ok is False:  return "✗"
+            return "—"
+
+        _td_rows = []
+        _td_rows.append({
+            "Criterion": f"Gas body velocity  (≤ {td['U_max_ms']:.3f} m/s)",
+            f"Design (100 %)": f"{td['U_act_ms']:.3f} m/s",
+            f"Turndown ({td['pct']} %)": f"{td['U_act_td_ms']:.3f} m/s",
+            "Design": _td_status(td["gas_vel_ok"]),
+            "Turndown": _td_status(td["gas_vel_td_ok"]),
+        })
+        _td_rows.append({
+            "Criterion": f"Re-entrainment bound  (≤ {td['U_reentrain_ms']:.3f} m/s, 1.15 × K)",
+            f"Design (100 %)": f"{td['U_act_ms']:.3f} m/s",
+            f"Turndown ({td['pct']} %)": "—",
+            "Design": _td_status(td["gas_reentrain_ok"]),
+            "Turndown": "—",
+        })
+        if td["has_meshpad"] and td["pad_load_pct"] is not None:
+            _drain_flag = "⚠ drainage" if td["pad_drain_warn"] else _td_status(td["pad_td_ok"])
+            _td_rows.append({
+                "Criterion": "Mesh pad load  (≤ 100 %)",
+                f"Design (100 %)": f"{td['pad_load_pct']:.0f} %",
+                f"Turndown ({td['pct']} %)": f"{td['pad_td_pct']:.0f} %",
+                "Design": _td_status(td["pad_ok"]),
+                "Turndown": _drain_flag,
+            })
+        _td_rows.append({
+            "Criterion": f"Hold-up time  (≥ {td['t_holdup_req_min']:.1f} min)",
+            f"Design (100 %)": f"{td['t_holdup_s']/60:.1f} min",
+            f"Turndown ({td['pct']} %)": f"{td['t_holdup_td_s']/60:.1f} min",
+            "Design": _td_status(td["holdup_ok"]),
+            "Turndown": _td_status(td["holdup_td_ok"]),
+        })
+        if td["include_surge"]:
+            _td_rows.append({
+                "Criterion": f"Surge time  NLL→LAHH  (≥ {td['t_surge_req_min']:.1f} min)",
+                f"Design (100 %)": f"{td['t_surge_s']/60:.1f} min",
+                f"Turndown ({td['pct']} %)": f"{td['t_surge_td_s']/60:.1f} min",
+                "Design": _td_status(td["surge_ok"]),
+                "Turndown": _td_status(td["surge_td_ok"]),
+            })
+        if td["rv2_pa"] is not None:
+            _td_rows.append({
+                "Criterion": "Inlet ρv²  (≤ 2 400 Pa)",
+                f"Design (100 %)": f"{td['rv2_pa']:,.0f} Pa",
+                f"Turndown ({td['pct']} %)": f"{td['rv2_td_pa']:,.0f} Pa",
+                "Design": _td_status(td["rv2_ok"]),
+                "Turndown": _td_status(td["rv2_td_ok"]),
+            })
+        st.dataframe(pd.DataFrame(_td_rows), hide_index=True, use_container_width=True)
+
+        _td_issues = []
+        if not td["gas_reentrain_ok"]:
+            _td_issues.append("Gas velocity exceeds re-entrainment limit at design flow.")
+        if not td["gas_vel_td_ok"]:
+            _td_issues.append(f"Gas velocity still exceeds separation limit at {td['pct']} % turndown.")
+        if td["pad_drain_warn"]:
+            _td_issues.append(
+                f"Pad velocity at {td['pct']} % turndown ({td['U_act_td_ms']:.3f} m/s) "
+                f"< 30 % of K limit — mesh pad drainage may be impaired."
+            )
+        for _iss in _td_issues:
+            st.warning(_iss, icon="⚠️")
+        if not _td_issues:
+            st.caption(f"No turndown issues at {td['pct']} %.")
 
         # ── LDV — Liquid Design Volume ────────────────────────────────────────
         if _ldv_result is not None:
@@ -3613,6 +3792,7 @@ def main():
             ldv_result=_ldv_result,
             int_loads_result=_int_loads,
             weight_result=_weight_result,
+            turndown_result=_turndown_result,
             Z_gas=Z_gas,
             lining_spec=lining_spec,
             head_type=head_type,
@@ -3661,6 +3841,7 @@ def main():
             ldv_result=_ldv_result,
             int_loads_result=_int_loads,
             weight_result=_weight_result,
+            turndown_result=_turndown_result,
             Z_gas=Z_gas,
             lining_spec=lining_spec,
             head_type=head_type,

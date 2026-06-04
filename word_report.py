@@ -422,6 +422,7 @@ def generate_word_report(
     ldv_result: dict | None = None,
     int_loads_result: dict | None = None,
     weight_result: dict | None = None,
+    turndown_result: dict | None = None,
     Z_gas: float = 1.0,
     lining_spec: dict | None = None,
     head_type=None,           # accepted but unused — reserved for future endcap section
@@ -818,6 +819,63 @@ def generate_word_report(
             ("Weld perimeter", f"{il['L_weld_m']*1000:.0f} mm  (full circumference)"),
             ("Material f_d / f_y", f"{il['fd_MPa']:.0f} MPa / {il['fy_MPa']:.0f} MPa"),
         ])
+
+    # ── D.x — Turndown Analysis ───────────────────────────────────────────────
+    if turndown_result is not None:
+        td = turndown_result
+        _d_td_num = 1 + (1 if ldv_result else 0) + (1 if int_loads_result else 0)
+        _sub_heading(doc, f"D.{_d_td_num}  Turndown Analysis  ({td['pct']} % of design flow)")
+        _caption(doc,
+                 f"Service: {td.get('svc_condition', '—')}  ·  "
+                 f"Re-entrainment limit = 1.15 × K = {td['U_reentrain_ms']:.3f} m/s  ·  "
+                 f"Drainage warning threshold = 0.30 × K limit.")
+
+        def _tds(ok) -> str:
+            if ok is True:  return "✓ OK"
+            if ok is False: return "✗ FAIL"
+            return "—"
+
+        td_rows: list[list] = [[
+            f"Gas velocity  (≤ {td['U_max_ms']:.3f} m/s)",
+            f"{td['U_act_ms']:.3f} m/s",
+            f"{td['U_act_td_ms']:.3f} m/s",
+            _tds(td["gas_vel_ok"]),
+            _tds(td["gas_vel_td_ok"]),
+        ], [
+            f"Re-entrainment (≤ {td['U_reentrain_ms']:.3f} m/s, 1.15 × K)",
+            f"{td['U_act_ms']:.3f} m/s", "—",
+            _tds(td["gas_reentrain_ok"]), "—",
+        ]]
+        if td.get("has_meshpad") and td.get("pad_load_pct") is not None:
+            td_rows.append([
+                "Mesh pad load  (≤ 100 %)",
+                f"{td['pad_load_pct']:.0f} %", f"{td['pad_td_pct']:.0f} %",
+                _tds(td.get("pad_ok")),
+                "⚠ drainage" if td.get("pad_drain_warn") else _tds(td.get("pad_td_ok")),
+            ])
+        td_rows.append([
+            f"Hold-up time  (≥ {td['t_holdup_req_min']:.1f} min)",
+            f"{td['t_holdup_s']/60:.1f} min", f"{td['t_holdup_td_s']/60:.1f} min",
+            _tds(td["holdup_ok"]), _tds(td["holdup_td_ok"]),
+        ])
+        if td.get("include_surge"):
+            td_rows.append([
+                f"Surge time NLL→LAHH  (≥ {td['t_surge_req_min']:.1f} min)",
+                f"{td['t_surge_s']/60:.1f} min", f"{td['t_surge_td_s']/60:.1f} min",
+                _tds(td.get("surge_ok")), _tds(td.get("surge_td_ok")),
+            ])
+        if td.get("rv2_pa") is not None:
+            td_rows.append([
+                "Inlet ρv²  (≤ 2 400 Pa)",
+                f"{td['rv2_pa']:,.0f} Pa", f"{td['rv2_td_pa']:,.0f} Pa",
+                _tds(td.get("rv2_ok")), _tds(td.get("rv2_td_ok")),
+            ])
+        _data_table(doc,
+                    ["Criterion", "Design (100 %)", f"Turndown ({td['pct']} %)",
+                     "Design", "TD"],
+                    td_rows,
+                    col_w=[7.5, 2.5, 2.5, 1.5, 1.5],
+                    status_cols=[3, 4])
 
     # ── E — Liquid Levels ─────────────────────────────────────────────────────
     _section_heading(doc, "E", "Liquid Levels & Volumes")

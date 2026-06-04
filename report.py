@@ -964,6 +964,7 @@ def generate_datasheet_html(
     ldv_result: dict | None = None,
     int_loads_result: dict | None = None,
     weight_result: dict | None = None,
+    turndown_result: dict | None = None,
     Z_gas: float = 1.0,
     lining_spec: dict | None = None,
     # Head geometry — needed for endcap drawings and analysis
@@ -1505,6 +1506,66 @@ def generate_datasheet_html(
             f'{_note}',
         )
 
+    # ── D.x  TURNDOWN ANALYSIS ───────────────────────────────────────────────
+    sec_d_td = ""
+    if turndown_result is not None:
+        td = turndown_result
+        _d_td_num = 1 + (1 if ldv_result else 0) + (1 if int_loads_result else 0)
+
+        def _tds(ok):
+            if ok is True:  return '<span class="ok">✓</span>'
+            if ok is False: return '<span class="fail">✗</span>'
+            return "—"
+
+        td_rows = [[
+            f"Gas body velocity  (≤ {td['U_max_ms']:.3f} m/s)",
+            f"{td['U_act_ms']:.3f}  m/s",
+            f"{td['U_act_td_ms']:.3f}  m/s",
+            _tds(td["gas_vel_ok"]), _tds(td["gas_vel_td_ok"]),
+        ], [
+            f"Re-entrainment bound  (≤ {td['U_reentrain_ms']:.3f} m/s, 1.15 × K)",
+            f"{td['U_act_ms']:.3f}  m/s", "—",
+            _tds(td["gas_reentrain_ok"]), "—",
+        ]]
+        if td.get("has_meshpad") and td.get("pad_load_pct") is not None:
+            _td_pad_status = ('<span class="warn">⚠ drainage</span>'
+                              if td.get("pad_drain_warn") else _tds(td.get("pad_td_ok")))
+            td_rows.append([
+                "Mesh pad load  (≤ 100 %)",
+                f"{td['pad_load_pct']:.0f} %", f"{td['pad_td_pct']:.0f} %",
+                _tds(td.get("pad_ok")), _td_pad_status,
+            ])
+        td_rows.append([
+            f"Hold-up time  (≥ {td['t_holdup_req_min']:.1f} min)",
+            f"{td['t_holdup_s']/60:.1f}  min", f"{td['t_holdup_td_s']/60:.1f}  min",
+            _tds(td["holdup_ok"]), _tds(td["holdup_td_ok"]),
+        ])
+        if td.get("include_surge"):
+            td_rows.append([
+                f"Surge time NLL→LAHH  (≥ {td['t_surge_req_min']:.1f} min)",
+                f"{td['t_surge_s']/60:.1f}  min", f"{td['t_surge_td_s']/60:.1f}  min",
+                _tds(td.get("surge_ok")), _tds(td.get("surge_td_ok")),
+            ])
+        if td.get("rv2_pa") is not None:
+            td_rows.append([
+                "Inlet ρv²  (≤ 2 400 Pa)",
+                f"{td['rv2_pa']:,.0f}  Pa", f"{td['rv2_td_pa']:,.0f}  Pa",
+                _tds(td.get("rv2_ok")), _tds(td.get("rv2_td_ok")),
+            ])
+        _td_note = (
+            f'<p style="font-size:0.82em;color:#64748b;margin-top:4px">'
+            f"Service: {_e(td.get('svc_condition', '—'))}  ·  "
+            f"Re-entrainment limit = 1.15 × K_sb = {td['U_reentrain_ms']:.3f} m/s  ·  "
+            f"Drainage warning threshold = 0.30 × K limit.  "
+            f"Hold-up and surge times increase at turndown — always pass.</p>"
+        )
+        sec_d_td = _sec(
+            f"D.{_d_td_num}", f"Turndown Analysis  ({td['pct']} % of design flow)",
+            _dt(["Criterion", f"Design (100 %)", f"Turndown ({td['pct']} %)",
+                 "Design", "TD"], td_rows)
+            + _td_note,
+        )
+
     # ── E  LIQUID LEVELS ──────────────────────────────────────────────────────
     _desc = {
         "LZLL": "Low-low liquid level — low-low shutdown",
@@ -1723,7 +1784,7 @@ def generate_datasheet_html(
     body = (
         header_html + banner + sketch_html
         + sec_a + sec_b + sec_c + sec_c_weight
-        + sec_d + sec_d_ldv + sec_d1
+        + sec_d + sec_d_ldv + sec_d1 + sec_d_td
         + sec_e + sec_f + sec_g + sec_g1 + sec_h
         + footer
     )
