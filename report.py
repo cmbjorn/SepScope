@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 import html as _esc
 from datetime import date as _date
+from engines.nozzle_reinforcement import suggest_schedule_upgrade
 
 # ── CSS ──────────────────────────────────────────────────────────────────────
 
@@ -1605,13 +1606,32 @@ def generate_datasheet_html(
             if nz.get("loc") in ("Left head", "Right head"):
                 nz_IR_g  = (OD - 2*t) / 2.0
                 nz_bot_g = (Di - nres.d_from_top_mm) - nz_IR_g
-                top_clr_g  = nres.edge_to_shell_mm           # OD top → crown ID
-                lzhh_clr_g = nz_bot_g - lzhh_mm              # LZHH → inlet device bottom
+                top_clr_g  = nres.edge_to_shell_mm
+                lzhh_clr_g = nz_bot_g - lzhh_mm
                 note_parts.append(f"OD top→crown: {top_clr_g:.0f} mm")
                 if nz.get("service") == "Inlet":
                     _flag_g = ("✓" if lzhh_clr_g >= 150
                                else ("✗ sub." if lzhh_clr_g < 0 else "⚠ &lt;150mm"))
                     note_parts.append(f"LZHH→inlet bot: {lzhh_clr_g:.0f} mm {_flag_g}")
+
+        # Schedule upgrade recommendation
+        if rres is not None and not rres.adequate:
+            _t_req_r = shell_res.t_calc_mm if nres is None else head_res.t_calc_mm
+            _t_nom_r = shell_res.t_nom_mm  if nres is None else head_res.t_nom_mm
+            _upg_r = suggest_schedule_upgrade(
+                Di=Di, P_barg=P_barg, fd_MPa=fd_MPa,
+                nozzle_OD_mm=OD, current_schedule=rec, nozzle_dn=dn,
+                t_req_mm=_t_req_r, t_nom_mm=_t_nom_r,
+                CA_mm=CA_mm, code=code_key, z=z_weld,
+                space_to_wall_mm=nres.edge_to_shell_mm if nres else None,
+                space_to_knuckle_mm=nres.edge_to_knuckle_mm if nres else None,
+            )
+            if _upg_r:
+                note_parts.append(
+                    f'<span style="color:#dc2626;font-weight:bold">Reinf. fail</span> '
+                    f'→ <span style="color:#d97706;font-weight:bold">{_e(_upg_r)}</span>'
+                )
+
         notes = "  |  ".join(note_parts)
 
         nz_rows.append([
@@ -1625,7 +1645,7 @@ def generate_datasheet_html(
             f"{t:.1f}",
             rec,
             "RF",
-            status_s + (f"  <span style='font-size:8pt;color:#555'>{_e(notes)}</span>" if notes else ""),
+            status_s + (f"  <span style='font-size:8pt;color:#555'>{notes}</span>" if notes else ""),
         ])
 
     sec_g = _sec("G", "Nozzle Schedule",

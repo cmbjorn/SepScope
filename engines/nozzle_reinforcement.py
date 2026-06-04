@@ -253,3 +253,73 @@ def reinforcement_check(
         adequate=adequate,
         warnings=warnings,
     )
+
+
+# Schedule order — lightest to heaviest
+_SCHEDULE_ORDER = ["Sch 10S", "Sch 40", "Sch 80", "Sch 160", "XXH"]
+
+
+def suggest_schedule_upgrade(
+    Di: float,
+    P_barg: float,
+    fd_MPa: float,
+    nozzle_OD_mm: float,
+    current_schedule: str,
+    nozzle_dn: int,
+    t_req_mm: float,
+    t_nom_mm: float,
+    CA_mm: float = 3.0,
+    code: str = "EN",
+    z: float = 1.0,
+    space_to_wall_mm: float | None = None,
+    space_to_knuckle_mm: float | None = None,
+) -> str | None:
+    """
+    When reinforcement fails for the current schedule, find the lightest
+    heavier schedule that makes it adequate without a pad.
+
+    Returns:
+      None                  — already adequate (no action needed)
+      "Sch 80"  (or other) — upgrade to this schedule, no pad needed
+      "Pad required"        — no schedule upgrade fixes it; pad needed
+    """
+    from engines.nozzle_geometry import NOZZLE_WALL_SCH, NOZZLE_WALL_T
+
+    current_t = float(NOZZLE_WALL_SCH.get(current_schedule, {}).get(
+        nozzle_dn, NOZZLE_WALL_T.get(nozzle_dn, 8.0)))
+
+    # Check whether current schedule is already adequate
+    rres = reinforcement_check(
+        Di=Di, P_barg=P_barg, fd_MPa=fd_MPa,
+        nozzle_OD_mm=nozzle_OD_mm, nozzle_t_mm=current_t,
+        t_head_req_mm=t_req_mm, t_head_nom_mm=t_nom_mm,
+        CA_mm=CA_mm, code=code, z=z,
+        space_to_wall_mm=space_to_wall_mm,
+        space_to_knuckle_mm=space_to_knuckle_mm,
+    )
+    if rres.adequate:
+        return None
+
+    # Try each heavier schedule
+    try:
+        start = _SCHEDULE_ORDER.index(current_schedule) + 1
+    except ValueError:
+        start = 1
+
+    for sched in _SCHEDULE_ORDER[start:]:
+        t_try = float(NOZZLE_WALL_SCH.get(sched, {}).get(
+            nozzle_dn, NOZZLE_WALL_T.get(nozzle_dn, 8.0)))
+        if t_try <= current_t:
+            continue  # schedule exists but no thicker wall for this DN
+        r = reinforcement_check(
+            Di=Di, P_barg=P_barg, fd_MPa=fd_MPa,
+            nozzle_OD_mm=nozzle_OD_mm, nozzle_t_mm=t_try,
+            t_head_req_mm=t_req_mm, t_head_nom_mm=t_nom_mm,
+            CA_mm=CA_mm, code=code, z=z,
+            space_to_wall_mm=space_to_wall_mm,
+            space_to_knuckle_mm=space_to_knuckle_mm,
+        )
+        if r.adequate:
+            return sched
+
+    return "Pad required"

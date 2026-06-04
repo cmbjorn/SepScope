@@ -29,6 +29,7 @@ from typing import Any
 
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor, Inches
+from engines.nozzle_reinforcement import suggest_schedule_upgrade
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -910,13 +911,27 @@ def generate_word_report(
             if nz.get("loc") in ("Left head", "Right head"):
                 nz_IR_w  = (OD - 2*t) / 2.0
                 nz_bot_w = (Di - nres.d_from_top_mm) - nz_IR_w
-                top_clr_w  = nres.edge_to_shell_mm          # OD top → crown ID
-                lzhh_clr_w = nz_bot_w - lzhh_mm             # LZHH → inlet device bottom
+                top_clr_w  = nres.edge_to_shell_mm
+                lzhh_clr_w = nz_bot_w - lzhh_mm
                 notes.append(f"OD top→crown: {top_clr_w:.0f} mm")
                 if nz.get("service") == "Inlet":
                     _fw = ("✓" if lzhh_clr_w >= 150
                            else ("✗ sub." if lzhh_clr_w < 0 else "⚠ <150mm"))
                     notes.append(f"LZHH→inlet bot: {lzhh_clr_w:.0f} mm {_fw}")
+        # Schedule upgrade recommendation
+        if rres is not None and not rres.adequate:
+            _t_req_w = shell_res.t_calc_mm if nres is None else head_res.t_calc_mm
+            _t_nom_w = shell_res.t_nom_mm  if nres is None else head_res.t_nom_mm
+            _upg_w = suggest_schedule_upgrade(
+                Di=Di, P_barg=P_barg, fd_MPa=fd_MPa,
+                nozzle_OD_mm=OD, current_schedule=rec, nozzle_dn=dn,
+                t_req_mm=_t_req_w, t_nom_mm=_t_nom_w,
+                CA_mm=CA_mm, code=code_key, z=z_weld,
+                space_to_wall_mm=nres.edge_to_shell_mm if nres else None,
+                space_to_knuckle_mm=nres.edge_to_knuckle_mm if nres else None,
+            )
+            if _upg_w:
+                notes.append(f"Reinf. fail → {_upg_w}")
         nz_rows.append([
             nz["tag"], "1", nz["service"], nz["loc"],
             f"DN{dn}", f"{pn_label} {nz.get('pn','')}",

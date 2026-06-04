@@ -20,6 +20,7 @@ from engines.nozzle_geometry import (
     NOZZLE_WALL_SCH, recommended_schedule,
 )
 from engines.head_geometry import _FD_CROWN_RATIO, _FD_KNUCKLE_RATIO
+from engines.nozzle_reinforcement import suggest_schedule_upgrade
 from engines.vessel_volume import vessel_volumes
 from standards import DN_SIZES, EN_PN_RATINGS, ASME_CLASS_PRESSURE_20C, max_pn_for_temperature
 
@@ -91,6 +92,75 @@ def _default_nozzles(Di: float, L_shell: float) -> list[dict]:
         {"tag": "LT1", "service": "Level transmitter",       "loc": "Shell — top",    "dn":  80, "pn": pn, "d_from_top": D / 2, "axial_mm": L * 0.63},
         {"tag": "LT2", "service": "Level trip",              "loc": "Shell — top",    "dn":  80, "pn": pn, "d_from_top": D / 2, "axial_mm": L * 0.375},
     ]
+
+def _auto_instrument_nozzles(
+    Di: float, L_shell: float, pn: int, existing: list[dict]
+) -> list[dict]:
+    """
+    Return a list of standard instrument nozzles that are not already present.
+    Compares by service to avoid duplicates.
+
+    Standard complement for a horizontal two-phase separator:
+      PT  — Pressure transmitter  DN50  shell top
+      PSH — Pressure trip         DN50  shell top
+      PI  — Pressure indicator    DN50  shell top
+      TT  — Temperature transmitter DN50 shell top
+      LT  — Level transmitter     DN80  shell top  (×2)
+      LG-T— Level gauge top tap   DN50  shell top
+      LG-B— Level gauge bottom tap DN50 shell bottom
+      D   — Drain                 DN50  shell bottom
+      V   — Vent                  DN50  shell top
+      PG  — Purge                 DN50  shell top
+    """
+    existing_services = {nz["service"] for nz in existing}
+
+    # (service, tag_prefix, dn, loc, axial_fraction)
+    _INST: list[tuple[str, str, int, str, float]] = [
+        ("Pressure transmitter",   "PT",  50, "Shell — top",    0.20),
+        ("Pressure trip",          "PSH", 50, "Shell — top",    0.45),
+        ("Pressure indicator",     "PI",  50, "Shell — top",    0.95),
+        ("Temperature transmitter","TT",  50, "Shell — top",    0.80),
+        ("Level transmitter",      "LT",  80, "Shell — top",    0.63),
+        ("Level trip",             "LT",  80, "Shell — top",    0.375),
+        ("Level gauge",            "LGT", 50, "Shell — top",    0.50),
+        ("Level gauge",            "LGB", 50, "Shell — bottom", 0.50),
+        ("Drain",                  "D",   50, "Shell — bottom", 0.50),
+        ("Vent",                   "V",   50, "Shell — top",    0.25),
+        ("Purge",                  "PG",  50, "Shell — top",    0.925),
+    ]
+
+    # Count existing tags to avoid collisions
+    used_tags = {nz["tag"] for nz in existing}
+
+    def _unique_tag(prefix: str) -> str:
+        for n in range(1, 20):
+            t = f"{prefix}{n}"
+            if t not in used_tags:
+                used_tags.add(t)
+                return t
+        return prefix
+
+    new_nozzles: list[dict] = []
+    seen_services_new: set[str] = set()
+
+    for svc, prefix, dn, loc, ax_frac in _INST:
+        # Skip if service (and this location for level gauge) already covered
+        key = (svc, loc)
+        if svc in existing_services or key in seen_services_new:
+            continue
+        seen_services_new.add(key)
+        new_nozzles.append({
+            "tag":      _unique_tag(prefix),
+            "service":  svc,
+            "loc":      loc,
+            "dn":       dn,
+            "pn":       pn,
+            "d_from_top": Di / 2,
+            "axial_mm": L_shell * ax_frac,
+        })
+
+    return new_nozzles
+
 
 st.set_page_config(
     page_title="SepScope",
@@ -2391,7 +2461,7 @@ def main():
         st.session_state["nozzles"].pop(_nz_remove)
         st.rerun()
 
-    _ab1, _ab2, *_ = st.columns([0.9, 1.0, 5])
+    _ab1, _ab2, _ab3, *_ = st.columns([0.9, 1.1, 1.5, 3])
     if _ab1.button("＋ Add nozzle"):
         st.session_state["nozzles"].append({
             "tag": f"N{len(nozzles)+1}", "service": "Spare",
@@ -2402,6 +2472,15 @@ def main():
     if _ab2.button("Reset to default"):
         st.session_state["nozzles"] = _default_nozzles(Di, L_shell)
         st.rerun()
+    if _ab3.button("＋ Auto-add instruments",
+                   help="Add standard PT/TT/LT/LG/Drain/Vent nozzles not already present"):
+        _new = _auto_instrument_nozzles(Di, L_shell, pn_default,
+                                        st.session_state["nozzles"])
+        if _new:
+            st.session_state["nozzles"].extend(_new)
+            st.rerun()
+        else:
+            st.toast("All standard instrument nozzles already present.")
 
     # ── Nozzle placement checks (reuse result already computed above) ─────────
     n_err  = sum(1 for c in placement_checks if c.level == "error")
@@ -2496,6 +2575,24 @@ def main():
             reinf_s = ("✓" if (rres is None or rres.adequate) else "✗")
             flng_s  = "✓" if flange_ok_nz else "✗"
 
+            # Schedule upgrade recommendation when reinforcement fails
+            upgrade_s = ""
+            if rres is not None and not rres.adequate:
+                _t_req = shell_res.t_calc_mm if nres is None else head_res.t_calc_mm
+                _t_nom = shell_res.t_nom_mm  if nres is None else head_res.t_nom_mm
+                _spc_w = nres.edge_to_shell_mm  if nres else None
+                _spc_k = nres.edge_to_knuckle_mm if nres else None
+                _upg = suggest_schedule_upgrade(
+                    Di=Di, P_barg=P_barg, fd_MPa=fd,
+                    nozzle_OD_mm=nz_OD, current_schedule=rec,
+                    nozzle_dn=nz["dn"],
+                    t_req_mm=_t_req, t_nom_mm=_t_nom,
+                    CA_mm=CA_mm, code=code_key, z=z_weld,
+                    space_to_wall_mm=_spc_w,
+                    space_to_knuckle_mm=_spc_k,
+                )
+                upgrade_s = f"→ {_upg}" if _upg else ""
+
             # Key inlet dimensions for head nozzles
             top_clr_str   = ""
             inlet_clr_str = ""
@@ -2517,6 +2614,7 @@ def main():
                 f"{pn_label}":       str(nz.get("pn", "")),
                 "Geom":              geom_s,
                 "Reinf":             reinf_s,
+                "Upgrade?":          upgrade_s,
                 "Flange":            flng_s,
                 "OD top→crown":      top_clr_str,
                 "LZHH→inlet bot":    inlet_clr_str,
@@ -2535,6 +2633,27 @@ def main():
 
                 for msg in (nres.errors + nres.warnings if nres else []) + (rres.warnings if rres else []):
                     st.warning(msg, icon="⚠️")
+
+                # Schedule upgrade recommendation
+                if rres is not None and not rres.adequate:
+                    _t_req_d = shell_res.t_calc_mm if nres is None else head_res.t_calc_mm
+                    _t_nom_d = shell_res.t_nom_mm  if nres is None else head_res.t_nom_mm
+                    _upg_d = suggest_schedule_upgrade(
+                        Di=Di, P_barg=P_barg, fd_MPa=fd,
+                        nozzle_OD_mm=nz_OD, current_schedule=rec,
+                        nozzle_dn=nz["dn"],
+                        t_req_mm=_t_req_d, t_nom_mm=_t_nom_d,
+                        CA_mm=CA_mm, code=code_key, z=z_weld,
+                        space_to_wall_mm=nres.edge_to_shell_mm if nres else None,
+                        space_to_knuckle_mm=nres.edge_to_knuckle_mm if nres else None,
+                    )
+                    if _upg_d == "Pad required":
+                        st.error(f"Reinforcement pad required — no schedule upgrade resolves the deficit "
+                                 f"({rres.A_deficit_mm2:,.0f} mm² short).", icon="🔧")
+                    elif _upg_d:
+                        st.warning(f"Upgrade {nz['tag']} from {rec} → **{_upg_d}** to satisfy "
+                                   f"reinforcement without a pad "
+                                   f"({rres.A_deficit_mm2:,.0f} mm² current deficit).", icon="🔧")
 
                 if nres is not None:  # head nozzle — full geometry detail
                     nz_IR  = (nz_OD - 2.0 * nz_t) / 2.0   # bore inner radius
