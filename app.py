@@ -3143,6 +3143,62 @@ def main():
         ]
         sc3.dataframe(pd.DataFrame(inv_rows), hide_index=True, use_container_width=True)
 
+        # ── Collection zone: baffle to outlet nozzle ─────────────────────────
+        if has_baffles and L_baffle_mm > 0:
+            _x_eff_l = L_baffle_mm                    # mm from left tangent
+            _x_eff_r = float(L_shell) - L_baffle_mm   # mm from left tangent
+
+            def _nz_axial_pos(nz):
+                loc = nz.get("loc", "")
+                if "Left head" in loc:
+                    return 0.0
+                if "Right head" in loc:
+                    return float(L_shell)
+                return float(nz.get("axial_mm", L_shell / 2))
+
+            _A_total_m2 = math.pi * (Di * 0.5e-3) ** 2
+            _A_liq_m2   = max(0.0, _A_total_m2 - sep_res.A_gas_m2)
+
+            _go_nz = next((nz for nz, *_ in nozzle_results
+                           if nz.get("service") == "Gas outlet"),    None)
+            _lo_nz = next((nz for nz, *_ in nozzle_results
+                           if nz.get("service") == "Liquid outlet"), None)
+
+            _cz_rows = []
+            for _lbl, _nz, _A_m2, _Q_m3h in [
+                ("Gas outlet",    _go_nz, sep_res.A_gas_m2, Q_gas_m3h),
+                ("Liquid outlet", _lo_nz, _A_liq_m2,        Q_liq_m3h),
+            ]:
+                if _nz is None or _A_m2 <= 0 or _Q_m3h <= 0:
+                    continue
+                _x      = _nz_axial_pos(_nz)
+                # Distance from outlet to nearest effective-zone boundary (mm)
+                _L_coll = (max(0.0, _x_eff_l - _x)     # outlet left of left baffle
+                         + max(0.0, _x - _x_eff_r))     # outlet right of right baffle
+                _V_coll = _A_m2 * _L_coll * 1e-3        # m³  (L mm × A m²)
+                _t_s    = _V_coll / (_Q_m3h / 3600.0)
+                _cz_rows.append({
+                    "Phase":                   _lbl,
+                    "Tag":                     _nz["tag"],
+                    "Axial pos. (mm)":         f"{_x:.0f}",
+                    "Collection length (mm)":  f"{_L_coll:.0f}",
+                    "Cross-section (m²)":      f"{_A_m2:.4f}",
+                    "Collection vol. (m³)":    f"{_V_coll:.4f}",
+                    "Residence time (s)":      f"{_t_s:.1f}",
+                })
+
+            if _cz_rows:
+                st.divider()
+                st.markdown("**Collection zone — baffle to outlet nozzle**")
+                st.caption(
+                    f"Length between each outlet nozzle and its nearest baffle × "
+                    f"phase cross-section at NLL ÷ volumetric flow.  "
+                    f"Effective zone: {_x_eff_l:.0f}–{_x_eff_r:.0f} mm from left tangent  "
+                    f"(baffle setback {L_baffle_mm:.0f} mm each end)."
+                )
+                st.dataframe(pd.DataFrame(_cz_rows), hide_index=True,
+                             use_container_width=True)
+
         # ── LDV — Liquid Design Volume ────────────────────────────────────────
         if _ldv_result is not None:
             ldv = _ldv_result
