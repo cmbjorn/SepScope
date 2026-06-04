@@ -3179,20 +3179,31 @@ def main():
     _go_nz_list = [nz for nz, *_ in nozzle_results if nz.get("service") == "Gas outlet"]
     _lo_nz_list = [nz for nz, *_ in nozzle_results if nz.get("service") == "Liquid outlet"]
 
+    # API RP 14E erosion criterion for single-phase streams:
+    #   v_e = C / sqrt(rho)  →  rho*v² = C_SI²
+    #   C = 100 (non-corrosive, sand-free, continuous service)
+    #   SI conversion: C_SI = 100 × 1.220 = 122  →  rho*v²_max = 14 884 Pa
+    _RV2_14E   = 122.0 ** 2          # 14 884 Pa  — API RP 14E C=100 erosion limit
+    _V_LIQ_MAX = 3.0                 # m/s — max velocity for level stability / vortex prevention
+
     _outlet_vel = {
-        "dn_go":     None, "ID_go":    None, "v_go":    None, "rv2_go":    None,
-        "rv2_go_ok": None,
-        "dn_lo":     None, "ID_lo":    None, "v_lo":    None, "rv2_lo":    None,
-        "rv2_lo_ok": None,
+        "dn_go": None, "ID_go": None, "v_go": None, "rv2_go": None,
+        "rv2_go_ok": None,                              # API RP 14E erosion (pure gas)
+        "dn_lo": None, "ID_lo": None, "v_lo": None, "rv2_lo": None,
+        "rv2_lo_ok":    None,                           # API RP 14E erosion (pure liquid)
+        "v_lo_stab_ok": None,                           # v ≤ 3.0 m/s level stability
+        "rv2_14e": _RV2_14E,
+        "v_liq_max": _V_LIQ_MAX,
     }
     if _go_nz_list:
         dn, ID, v, rv2 = _nozzle_rv2(_go_nz_list[0], Q_gas_m3h, rho_gas)
         _outlet_vel.update(dn_go=dn, ID_go=ID, v_go=v, rv2_go=rv2,
-                           rv2_go_ok=(rv2 <= 2400.0))
+                           rv2_go_ok=(rv2 <= _RV2_14E))
     if _lo_nz_list:
         dn, ID, v, rv2 = _nozzle_rv2(_lo_nz_list[0], Q_liq_m3h, rho_liq)
         _outlet_vel.update(dn_lo=dn, ID_lo=ID, v_lo=v, rv2_lo=rv2,
-                           rv2_lo_ok=(rv2 <= 8000.0))
+                           rv2_lo_ok=(rv2 <= _RV2_14E),
+                           v_lo_stab_ok=(v <= _V_LIQ_MAX))
 
     # ── Inlet device sizing ───────────────────────────────────────────────────
     _inlet_dev_sizing = None
@@ -3414,17 +3425,24 @@ def main():
                        delta_color="normal" if _rv2_design_ok else "inverse",
                        help=f"v = {_v_in_design:.2f} m/s  ρ_mix = {_rho_mix_sep:.1f} kg/m³")
         if _outlet_vel["rv2_go"] is not None:
-            sc3.metric(f"Gas outlet DN{_outlet_vel['dn_go']}  (gas)",
+            _lim_go = _outlet_vel["rv2_14e"]
+            sc3.metric(f"Gas outlet DN{_outlet_vel['dn_go']}  ρv² (erosion)",
                        f"{_outlet_vel['rv2_go']:,.0f} Pa",
-                       delta=f"{'OK' if _outlet_vel['rv2_go_ok'] else 'EXCEEDS'} — lim 2 400 Pa",
+                       delta=f"{'OK' if _outlet_vel['rv2_go_ok'] else 'EXCEEDS'} — lim {_lim_go:,.0f} Pa",
                        delta_color="normal" if _outlet_vel["rv2_go_ok"] else "inverse",
-                       help=f"v = {_outlet_vel['v_go']:.2f} m/s  ρ_gas = {rho_gas:.3f} kg/m³")
+                       help=f"API RP 14E C=100 pure gas  ·  v = {_outlet_vel['v_go']:.2f} m/s  ρ_gas = {rho_gas:.3f} kg/m³")
         if _outlet_vel["rv2_lo"] is not None:
-            sc3.metric(f"Liquid outlet DN{_outlet_vel['dn_lo']}  (liquid)",
+            _lim_lo = _outlet_vel["rv2_14e"]
+            sc3.metric(f"Liquid outlet DN{_outlet_vel['dn_lo']}  ρv² (erosion)",
                        f"{_outlet_vel['rv2_lo']:,.0f} Pa",
-                       delta=f"{'OK' if _outlet_vel['rv2_lo_ok'] else 'EXCEEDS'} — lim 8 000 Pa",
+                       delta=f"{'OK' if _outlet_vel['rv2_lo_ok'] else 'EXCEEDS'} — lim {_lim_lo:,.0f} Pa",
                        delta_color="normal" if _outlet_vel["rv2_lo_ok"] else "inverse",
-                       help=f"v = {_outlet_vel['v_lo']:.2f} m/s  ρ_liq = {rho_liq:.0f} kg/m³")
+                       help=f"API RP 14E C=100 pure liquid  ·  v = {_outlet_vel['v_lo']:.2f} m/s  ρ_liq = {rho_liq:.0f} kg/m³")
+            sc3.metric(f"Liquid outlet DN{_outlet_vel['dn_lo']}  velocity (stability)",
+                       f"{_outlet_vel['v_lo']:.2f} m/s",
+                       delta=f"{'OK' if _outlet_vel['v_lo_stab_ok'] else 'EXCEEDS'} — lim {_outlet_vel['v_liq_max']:.1f} m/s",
+                       delta_color="normal" if _outlet_vel["v_lo_stab_ok"] else "inverse",
+                       help="Max 3.0 m/s to prevent vortex draw-down and maintain stable liquid level")
 
         sc3.markdown("**Liquid inventory (incl. heads)**")
         inv_rows = [

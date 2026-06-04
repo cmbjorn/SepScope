@@ -624,15 +624,23 @@ def generate_word_report(
         ])
     if outlet_vel and outlet_vel.get("rv2_go") is not None:
         sizing_data.append([
-            f"Gas outlet nozzle ρv²  (DN{outlet_vel['dn_go']})  [API RP 14E]",
-            f"{outlet_vel['rv2_go']:,.0f} Pa", "≤ 2 400 Pa",
+            f"Gas outlet ρv²  (DN{outlet_vel['dn_go']})  [API RP 14E C=100 — erosion]",
+            f"{outlet_vel['rv2_go']:,.0f} Pa  ({outlet_vel['v_go']:.2f} m/s)",
+            f"≤ {outlet_vel.get('rv2_14e', 14884):,.0f} Pa",
             _status(outlet_vel.get("rv2_go_ok")),
         ])
     if outlet_vel and outlet_vel.get("rv2_lo") is not None:
         sizing_data.append([
-            f"Liquid outlet nozzle ρv²  (DN{outlet_vel['dn_lo']})  [API RP 14E]",
-            f"{outlet_vel['rv2_lo']:,.0f} Pa", "≤ 8 000 Pa",
+            f"Liquid outlet ρv²  (DN{outlet_vel['dn_lo']})  [API RP 14E C=100 — erosion]",
+            f"{outlet_vel['rv2_lo']:,.0f} Pa  ({outlet_vel['v_lo']:.2f} m/s)",
+            f"≤ {outlet_vel.get('rv2_14e', 14884):,.0f} Pa",
             _status(outlet_vel.get("rv2_lo_ok")),
+        ])
+        sizing_data.append([
+            f"Liquid outlet velocity  (DN{outlet_vel['dn_lo']})  [level stability / vortex]",
+            f"{outlet_vel['v_lo']:.2f} m/s",
+            f"≤ {outlet_vel.get('v_liq_max', 3.0):.1f} m/s",
+            _status(outlet_vel.get("v_lo_stab_ok")),
         ])
 
     _data_table(doc, ["Criterion", "Actual", "Limit / Target", "Status"],
