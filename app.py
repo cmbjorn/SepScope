@@ -2180,7 +2180,7 @@ def main():
         include_ldv = _yn("Calculate LDV", "include_ldv", default="No")
         vb_offset_mm = 0.0
         ldv_sf   = 1.5
-        ldv_sf_b = 1.5
+        ldv_sf_b = 1.0
         ldv_target_m3: float | None = None   # None = not set
         if include_ldv:
             vb_offset_mm = st.number_input(
@@ -2201,7 +2201,7 @@ def main():
             )
             ldv_sf_b = _sf_c2.number_input(
                 "Seg B safety factor",
-                min_value=1.0, max_value=3.0, value=1.5, step=0.05,
+                min_value=1.0, max_value=3.0, value=1.0, step=0.05,
                 key="ldv_sf_b",
                 help="Seg B (LZLL → LALL): Required = Target × SF.  "
                      "Can be set to 1.0 if the segment is sized without an additional margin "
