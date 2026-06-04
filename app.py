@@ -21,6 +21,7 @@ from engines.nozzle_geometry import (
 )
 from engines.head_geometry import _FD_CROWN_RATIO, _FD_KNUCKLE_RATIO
 from engines.nozzle_reinforcement import suggest_schedule_upgrade
+from engines.inlet_device import size_inlet_device, RV2_LIMITS
 from engines.vessel_volume import vessel_volumes
 from standards import DN_SIZES, EN_PN_RATINGS, ASME_CLASS_PRESSURE_20C, max_pn_for_temperature
 
@@ -2192,7 +2193,19 @@ def main():
                      "Typical: 15–25 %.",
             )
 
-        has_inlet_dev = _yn("Inlet device (half-pipe)", "has_inlet_dev")
+        _INLET_DEV_TYPES = [
+            "Half-pipe diverter",
+            "Slotted/perforated cylinder",
+            "Vane distributor (vendor-sized)",
+            "None",
+        ]
+        inlet_dev_type = st.selectbox(
+            "Inlet device type", _INLET_DEV_TYPES,
+            index=0, key="inlet_dev_type",
+            help="API 12J §5.3. Half-pipe and slotted cylinder are sized automatically. "
+                 "Vane distributor requires vendor data.",
+        )
+        has_inlet_dev = inlet_dev_type != "None"
 
         has_meshpad = _yn("Mesh pad demister", "has_meshpad")
         K_pad = 0.10
@@ -3151,6 +3164,24 @@ def main():
         "svc_condition":    svc_condition,
     }
 
+    # ── Inlet device sizing ───────────────────────────────────────────────────
+    _inlet_dev_sizing = None
+    if has_inlet_dev and _inlet_nz_list:
+        _nz_id0 = _inlet_nz_list[0]
+        _nz_od0 = NOZZLE_OD.get(_nz_id0["dn"], _nz_id0["dn"] * 1.05)
+        _nz_rec0 = recommended_schedule(_nz_id0.get("pn", 25), code_key)
+        _nz_t0  = float(NOZZLE_WALL_SCH[_nz_rec0].get(_nz_id0["dn"],
+                         NOZZLE_WALL_T.get(_nz_id0["dn"], 8.0)))
+        _nz_id_mm0 = max(_nz_od0 - 2 * _nz_t0, 1.0)
+        _inlet_dev_sizing = size_inlet_device(
+            device_type=inlet_dev_type,
+            Q_mix_m3h_per_inlet=(Q_gas_m3h + Q_liq_m3h) / n_inlets,
+            rho_mix_kgm3=_rho_mix_sep,
+            nozzle_OD_mm=_nz_od0,
+            nozzle_ID_mm=_nz_id_mm0,
+            svc_condition=svc_condition,
+        )
+
     # ── Internal mechanical loads (LDV startup surge) ─────────────────────────
     _int_loads: dict | None = None
     if _ldv_result is not None and has_baffles:
@@ -3590,6 +3621,70 @@ def main():
             ]
             st.dataframe(pd.DataFrame(_ldv_rows), hide_index=True, use_container_width=True)
 
+    # ── Inlet device sizing ───────────────────────────────────────────────────
+    _dev_label = inlet_dev_type if has_inlet_dev else "None"
+    with st.expander(f"**Inlet device sizing — {_dev_label}  (API 12J §5.3)**",
+                     expanded=has_inlet_dev):
+        if not has_inlet_dev:
+            st.info("No inlet device selected.")
+        elif inlet_dev_type == "Vane distributor (vendor-sized)":
+            st.info(
+                "Vane / schoepentoeter distributors are sized per vendor data sheet. "
+                "No API 12J formula applies — obtain sizing from the equipment supplier."
+            )
+        elif _inlet_dev_sizing is None:
+            st.warning("No inlet nozzle found in the nozzle schedule — add an Inlet nozzle to enable sizing.")
+        else:
+            ids = _inlet_dev_sizing
+            _ia, _ib, _ic, _id = st.columns(4)
+
+            if ids.device_type == "Half-pipe diverter":
+                _ia.metric("Half-pipe OD", f"{ids.D_device_mm:.0f} mm",
+                           help=f"≥ 1.5 × nozzle OD ({ids.nozzle_OD_mm:.0f} mm) per API 12J §5.3.1")
+                _ib.metric("Half-pipe length", f"{ids.L_device_mm:.0f} mm",
+                           help="Governing criterion: ρv² limit, 2× area rule, or ≥ 2 × nozzle OD")
+                _ic.metric("Face area / Nozzle area", f"{ids.area_ratio:.1f} ×",
+                           delta="✓ ≥ 2.0 (API 12J)" if ids.area_api_ok else "✗ < 2.0 (API 12J)",
+                           delta_color="normal" if ids.area_api_ok else "inverse")
+                _id.metric("ρv² at device face",
+                           f"{ids.rv2_face_Pa:,.0f} Pa",
+                           delta=f"{'✓' if ids.rv2_face_ok else '✗'} limit {ids.rv2_limit_Pa:,.0f} Pa",
+                           delta_color="normal" if ids.rv2_face_ok else "inverse")
+                st.caption(
+                    f"Nozzle DN{_inlet_nz_list[0]['dn']}  ·  "
+                    f"ID = {ids.nozzle_ID_mm:.0f} mm  ·  "
+                    f"v_nozzle = {ids.v_nozzle_ms:.2f} m/s  ·  "
+                    f"ρv²_nozzle = {ids.rv2_nozzle_Pa:,.0f} Pa  ·  "
+                    f"Service: {ids.svc_condition}  ·  "
+                    f"ρv² limit at device: {ids.rv2_limit_Pa:,.0f} Pa  (API 12J / GPSA)"
+                )
+
+            elif ids.device_type == "Slotted/perforated cylinder":
+                _ia.metric("Cylinder OD", f"{ids.D_device_mm:.0f} mm",
+                           help=f"≥ 1.5 × nozzle OD ({ids.nozzle_OD_mm:.0f} mm) per API 12J §5.3.2")
+                _ib.metric("Cylinder length", f"{ids.L_device_mm:.0f} mm",
+                           help="≥ 4 × nozzle OD, minimum 300 mm")
+                _ic.metric("Total slot area", f"{ids.A_slot_mm2:,.0f} mm²",
+                           delta=f"{'✓' if ids.area_api_ok else '✗'} ≥ 2 × nozzle area "
+                                 f"({ids.A_nozzle_m2*1e6:,.0f} mm² × 2)",
+                           delta_color="normal" if ids.area_api_ok else "inverse",
+                           help=f"Area ratio = {ids.area_ratio:.1f}× nozzle bore area")
+                _id.metric("ρv² at slots",
+                           f"{ids.rv2_face_Pa:,.0f} Pa",
+                           delta=f"{'✓' if ids.rv2_face_ok else '✗'} limit {ids.rv2_limit_Pa:,.0f} Pa",
+                           delta_color="normal" if ids.rv2_face_ok else "inverse")
+                st.caption(
+                    f"Indicative hole layout: {ids.n_holes_dn25} × DN25 holes "
+                    f"({ids.A_slot_mm2:,.0f} mm² total)  ·  "
+                    f"v_slot = {ids.v_face_ms:.2f} m/s  ·  "
+                    f"Service: {ids.svc_condition}"
+                )
+
+            for note in ids.notes:
+                st.warning(note, icon="⚠️")
+            if ids.adequate:
+                st.success("Device sizing adequate per API 12J §5.3 criteria.", icon="✓")
+
     # ── Internals mechanical loads ────────────────────────────────────────────
     with st.expander("**Internals — mechanical loads (fabrication)**", expanded=False):
         if _int_loads is None:
@@ -3793,6 +3888,8 @@ def main():
             int_loads_result=_int_loads,
             weight_result=_weight_result,
             turndown_result=_turndown_result,
+            inlet_dev_type=inlet_dev_type,
+            inlet_dev_sizing=_inlet_dev_sizing,
             Z_gas=Z_gas,
             lining_spec=lining_spec,
             head_type=head_type,
@@ -3842,6 +3939,8 @@ def main():
             int_loads_result=_int_loads,
             weight_result=_weight_result,
             turndown_result=_turndown_result,
+            inlet_dev_type=inlet_dev_type,
+            inlet_dev_sizing=_inlet_dev_sizing,
             Z_gas=Z_gas,
             lining_spec=lining_spec,
             head_type=head_type,

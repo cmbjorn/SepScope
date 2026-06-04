@@ -965,6 +965,8 @@ def generate_datasheet_html(
     int_loads_result: dict | None = None,
     weight_result: dict | None = None,
     turndown_result: dict | None = None,
+    inlet_dev_type: str = "Half-pipe diverter",
+    inlet_dev_sizing=None,   # InletDeviceSizing | None
     Z_gas: float = 1.0,
     lining_spec: dict | None = None,
     # Head geometry — needed for endcap drawings and analysis
@@ -1621,9 +1623,31 @@ def generate_datasheet_html(
                  ))
 
     # ── F  INTERNALS ──────────────────────────────────────────────────────────
+    _dev_desc = inlet_dev_type if has_inlet_dev else "None"
+    if has_inlet_dev and inlet_dev_sizing is not None:
+        ids = inlet_dev_sizing
+        if ids.device_type == "Half-pipe diverter":
+            _dev_desc = (
+                f"Half-pipe diverter  ·  OD {ids.D_device_mm:.0f} mm  ×  "
+                f"L {ids.L_device_mm:.0f} mm  ·  "
+                f"Face area {ids.A_opening_m2*1e4:.0f} cm²  ({ids.area_ratio:.1f}× nozzle)  ·  "
+                f"ρv² {ids.rv2_face_Pa:,.0f} / {ids.rv2_limit_Pa:,.0f} Pa  "
+                f"({'✓' if ids.adequate else '✗'})"
+            )
+        elif ids.device_type == "Slotted/perforated cylinder":
+            _dev_desc = (
+                f"Perforated cylinder  ·  OD {ids.D_device_mm:.0f} mm  ×  "
+                f"L {ids.L_device_mm:.0f} mm  ·  "
+                f"Slot area {ids.A_slot_mm2:,.0f} mm² ({ids.area_ratio:.1f}× nozzle)  ·  "
+                f"ρv² {ids.rv2_face_Pa:,.0f} / {ids.rv2_limit_Pa:,.0f} Pa  "
+                f"({'✓' if ids.adequate else '✗'})"
+            )
+    elif has_inlet_dev and inlet_dev_type == "Vane distributor (vendor-sized)":
+        _dev_desc = "Vane distributor — size per vendor data sheet"
+
     internals_rows = [
         ["Inlet device",
-         f"Half-pipe distributor — fitted at each inlet nozzle" if has_inlet_dev else "None",
+         _dev_desc,
          str(n_inlets) if has_inlet_dev else "—",
          "Deflects two-phase flow downward; reduces jetting and liquid surface turbulence"],
         ["Inlet baffles / distribution plates",

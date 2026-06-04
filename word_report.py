@@ -423,6 +423,8 @@ def generate_word_report(
     int_loads_result: dict | None = None,
     weight_result: dict | None = None,
     turndown_result: dict | None = None,
+    inlet_dev_type: str = "Half-pipe diverter",
+    inlet_dev_sizing=None,    # InletDeviceSizing | None
     Z_gas: float = 1.0,
     lining_spec: dict | None = None,
     head_type=None,           # accepted but unused — reserved for future endcap section
@@ -923,12 +925,33 @@ def generate_word_report(
                 col_w=[1.5, 6.5, 2.0, 1.5, 3.0, 2.0])
 
     # ── F — Internals ─────────────────────────────────────────────────────────
+    def _word_dev_desc(dev_type: str, has_dev: bool, ids) -> str:
+        if not has_dev:
+            return "None"
+        if dev_type == "Vane distributor (vendor-sized)":
+            return "Vane distributor — size per vendor data sheet"
+        if ids is None:
+            return dev_type
+        if ids.device_type == "Half-pipe diverter":
+            return (f"Half-pipe diverter  OD {ids.D_device_mm:.0f} mm × "
+                    f"L {ids.L_device_mm:.0f} mm  |  "
+                    f"Face {ids.A_opening_m2*1e4:.0f} cm² ({ids.area_ratio:.1f}× nozzle)  |  "
+                    f"ρv² {ids.rv2_face_Pa:,.0f}/{ids.rv2_limit_Pa:,.0f} Pa "
+                    f"({'OK' if ids.adequate else 'FAIL'})")
+        if ids.device_type == "Slotted/perforated cylinder":
+            return (f"Perforated cylinder  OD {ids.D_device_mm:.0f} mm × "
+                    f"L {ids.L_device_mm:.0f} mm  |  "
+                    f"Slots {ids.A_slot_mm2:,.0f} mm² ({ids.area_ratio:.1f}× nozzle)  |  "
+                    f"ρv² {ids.rv2_face_Pa:,.0f}/{ids.rv2_limit_Pa:,.0f} Pa "
+                    f"({'OK' if ids.adequate else 'FAIL'})")
+        return dev_type
+
     _section_heading(doc, "F", "Internals")
     _data_table(doc,
                 ["Component", "Description", "Qty", "Function / Notes"],
                 [
                     ["Inlet device",
-                     f"Half-pipe distributor at each inlet" if has_inlet_dev else "None",
+                     _word_dev_desc(inlet_dev_type, has_inlet_dev, inlet_dev_sizing),
                      str(n_inlets) if has_inlet_dev else "—",
                      "Deflects two-phase flow downward; reduces jetting and surface turbulence"],
                     ["Inlet baffles",
