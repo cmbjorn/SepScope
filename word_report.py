@@ -6,15 +6,18 @@ Structure
   Cover      — project / vessel header, revision block, issued-for stamp
   A          — Design conditions (operating & design P/T, hydro test)
   B          — Process fluids (gas & liquid properties, nozzle stream table)
-  C          — Mechanical design (geometry, calculated thicknesses, material)
-  C.1        — Shell thickness calculation narrative
-  C.2        — Head thickness calculation narrative
-  C.3        — Internal Lining / Surface Treatment (when applicable)
-  C.3 or C.4 — Weight estimate (end of mechanical design)
-  D          — Separator sizing (API 12J screening table)
-  D.1        — LDV — Liquid Design Volume (when applicable)
+  C          — Separator sizing (API 12J screening table)
+  C.1        — Turndown Analysis
+  C.2        — LDV — Liquid Design Volume (when applicable)
+  C.3        — Internals — Mechanical Loads (LDV Startup Surge) (when applicable)
+  D          — Mechanical design (geometry, calculated thicknesses, material)
+  D.1        — Weight estimate (always first under mechanical)
+  D.2        — Shell thickness calculation narrative
+  D.3        — Head thickness calculation narrative
+  D.4        — Internal Lining / Surface Treatment (when applicable)
   E          — Liquid levels & volumes
   F          — Internals
+  F.1        — Inlet Device Sizing (API 12J §5.3)
   G          — Nozzle schedule
   G.1        — Endcap nozzle detail (zone, edge clearances, head comparison)
   H          — Engineering findings & notes
@@ -425,6 +428,7 @@ def generate_word_report(
     turndown_result: dict | None = None,
     inlet_dev_type: str = "Half-pipe diverter",
     inlet_dev_sizing=None,    # InletDeviceSizing | None
+    outlet_vel: dict | None = None,   # keys: dn_go, v_go, rv2_go, rv2_go_ok, dn_lo, v_lo, rv2_lo, rv2_lo_ok
     Z_gas: float = 1.0,
     lining_spec: dict | None = None,
     head_type=None,           # accepted but unused — reserved for future endcap section
@@ -561,123 +565,9 @@ def generate_word_report(
     _caption(doc, "Inlet ρv² limit: 2 400 Pa (API RP 14E, non-erosive service). "
                   f"Inlet flow split equally between {n_inlets} nozzle(s).")
 
-    # ── C — Mechanical Design ─────────────────────────────────────────────────
+    # ── C — Separator Sizing ──────────────────────────────────────────────────
     doc.add_page_break()
-    _section_heading(doc, "C", "Mechanical Design")
-    _kv_table(doc, [
-        ("Inner diameter Di",             f"{Di:,.0f} mm"),
-        ("Shell length (T–T)",            f"{L_shell:,.0f} mm"),
-        ("Overall length (pole–pole)",    f"{L_shell + 2*h_head:,.0f} mm"),
-        ("Head type",                     head_type_label),
-        ("Head depth h",                  f"{h_head:.0f} mm"),
-        ("Material (shell & heads)",      mat_name),
-        ("Allowable stress fd",           f"{fd_MPa:.1f} MPa  at {T_C:.0f} °C"),
-        ("Corrosion allowance CA",        f"{CA_mm:.1f} mm"),
-        ("Weld joint efficiency z",       f"{z_weld:.2f}"),
-        ("Shell thickness — calculated",  f"{shell_res.t_calc_mm:.3f} mm"),
-        ("Shell thickness — nominal",     f"{shell_res.t_nom_mm:.1f} mm"),
-        ("Head thickness — calculated",   f"{head_res.t_calc_mm:.3f} mm"),
-        ("Head thickness — nominal",      f"{head_res.t_nom_mm:.1f} mm"),
-        ("Support type",                  "Saddle supports — 2 off"),
-        ("Saddle position (from tangent)", f"{saddle_a_mm:.0f} mm" if saddle_a_mm > 0 else "TBD"),
-        ("Saddle width",                  f"{saddle_w_mm:.0f} mm"),
-    ])
-
-    _sub_heading(doc, "C.1  Shell Thickness Calculation")
-    _kv_table(doc, [
-        ("Formula (EN / ASME cylindrical)", shell_res.formula),
-        ("Code clause",                     shell_res.clause),
-        ("Calculated minimum thickness",    f"{shell_res.t_calc_mm:.3f} mm"),
-        ("Corrosion allowance CA",          f"{CA_mm:.1f} mm"),
-        ("Nominal thickness selected",      f"{shell_res.t_nom_mm:.1f} mm  (rounded to next 0.5 mm)"),
-        ("Weld joint efficiency z",         f"{z_weld:.2f}"),
-    ])
-
-    _sub_heading(doc, "C.2  Head Thickness Calculation")
-    _kv_table(doc, [
-        ("Head type",                  head_type_label),
-        ("Formula",                    head_res.formula),
-        ("Code clause",                head_res.clause),
-        ("Calculated minimum thickness", f"{head_res.t_calc_mm:.3f} mm"),
-        ("Corrosion allowance CA",     f"{CA_mm:.1f} mm"),
-        ("Nominal thickness selected", f"{head_res.t_nom_mm:.1f} mm"),
-    ])
-    if head_warnings:
-        for w in head_warnings:
-            _caption(doc, f"⚠  {w}")
-    if shell_res.warnings:
-        for w in shell_res.warnings:
-            _caption(doc, f"⚠  {w}")
-
-    # C.3 — Internal lining / surface treatment
-    _c3_used = False
-    if lining_spec:
-        ls = lining_spec
-        lining_pairs: list[tuple[str, str]] = []
-        if ls.get("has_clad"):
-            lining_pairs += [
-                ("Internal cladding / weld overlay", ls["clad_material"]),
-                ("Cladding thickness", f"{ls['clad_t_mm']:.1f} mm  (min., after forming)"),
-                ("Note", "Cladding does not contribute to pressure-bearing wall thickness"),
-            ]
-            if ls.get("clad_note"):
-                lining_pairs.append(("Cladding specification", ls["clad_note"]))
-        if ls.get("has_enp"):
-            lining_pairs += [
-                ("Internal surface plating", ls["enp_type"]),
-                ("Plating thickness", f"{ls['enp_t_um']:.0f} µm  (min.)"),
-                ("Note", "Plating does not contribute to pressure-bearing wall thickness"),
-            ]
-            if ls.get("enp_note"):
-                lining_pairs.append(("Plating specification", ls["enp_note"]))
-        if ls.get("free_text"):
-            lining_pairs.append(("Additional material / treatment notes", ls["free_text"]))
-        if lining_pairs:
-            _sub_heading(doc, "C.3  Internal Lining / Surface Treatment")
-            _kv_table(doc, lining_pairs)
-            _c3_used = True
-
-    # C.3 or C.4 — Weight estimate (end of mechanical design section)
-    if weight_result is not None:
-        wt = weight_result
-        _c_wt_sub = "C.4" if _c3_used else "C.3"
-        _sub_heading(doc, f"{_c_wt_sub}  Weight Estimate")
-        _caption(doc,
-                 "Estimated weights ±15–20 %. Shell and heads use nominal wall thickness. "
-                 "Nozzle weight = pipe stub (300 mm projection) + one weld-neck flange per nozzle. "
-                 "Saddle weight from plate-area estimate. Misc +5 % covers welds, paint, support clips.")
-        _total_w = max(wt["m_dry_kg"], 1.0)
-        def _wpct_w(m): return f"{m / _total_w * 100:.1f} %"
-        _kv_table(doc, [
-            ("Dry weight",
-             f"{wt['m_dry_kg']:,.0f} kg  ({wt['m_dry_kg']/1000:.2f} t)"),
-            ("Operating weight",
-             f"{wt['m_operating_kg']:,.0f} kg  ({wt['m_operating_kg']/1000:.2f} t)  "
-             f"[liquid at NLL: {wt['m_liquid_op_kg']:,.0f} kg]"),
-            ("Hydrotest weight",
-             f"{wt['m_hydrotest_kg']:,.0f} kg  ({wt['m_hydrotest_kg']/1000:.2f} t)  "
-             f"[water fill: {wt['m_water_ht_kg']:,.0f} kg]"),
-        ])
-        _sub_heading(doc, "Dry weight breakdown")
-        _data_table(doc,
-            ["Component", "Mass (kg)", "% of dry"],
-            [
-                ["Shell",               f"{wt['m_shell_kg']:,.0f}",    _wpct_w(wt['m_shell_kg'])],
-                ["Heads × 2",           f"{wt['m_heads_kg']:,.0f}",    _wpct_w(wt['m_heads_kg'])],
-                [f"Nozzles ({len(wt['nozzle_detail'])})",
-                                         f"{wt['m_nozzles_kg']:,.0f}", _wpct_w(wt['m_nozzles_kg'])],
-                ["Saddles × 2",         f"{wt['m_saddles_kg']:,.0f}",  _wpct_w(wt['m_saddles_kg'])],
-                ["Internals",           f"{wt['m_internals_kg']:,.0f}",_wpct_w(wt['m_internals_kg'])],
-                [f"Misc (+{wt['misc_factor']*100:.0f} %)",
-                                         f"{wt['m_misc_kg']:,.0f}",   f"{wt['misc_factor']*100:.0f} %"],
-                ["Total dry",           f"{wt['m_dry_kg']:,.0f}",      "100 %"],
-            ],
-            col_w=[6.0, 3.5, 3.0],
-        )
-
-    # ── D — Separator Sizing ──────────────────────────────────────────────────
-    doc.add_page_break()
-    _section_heading(doc, "D", "Separator Sizing  (API 12J Screening)")
+    _section_heading(doc, "C", "Separator Sizing  (API 12J Screening)")
 
     delta_rho = max(0.0, rho_l - rho_g)
     pad_rows: list[list] = []
@@ -732,101 +622,28 @@ def generate_word_report(
             f"Inlet nozzle ρv²  (DN{nz0['dn']})  [API RP 14E]",
             f"{rv2:,.0f} Pa", "≤ 2 400 Pa", _status(rv2 <= 2400.0),
         ])
+    if outlet_vel and outlet_vel.get("rv2_go") is not None:
+        sizing_data.append([
+            f"Gas outlet nozzle ρv²  (DN{outlet_vel['dn_go']})  [API RP 14E]",
+            f"{outlet_vel['rv2_go']:,.0f} Pa", "≤ 2 400 Pa",
+            _status(outlet_vel.get("rv2_go_ok")),
+        ])
+    if outlet_vel and outlet_vel.get("rv2_lo") is not None:
+        sizing_data.append([
+            f"Liquid outlet nozzle ρv²  (DN{outlet_vel['dn_lo']})  [API RP 14E]",
+            f"{outlet_vel['rv2_lo']:,.0f} Pa", "≤ 8 000 Pa",
+            _status(outlet_vel.get("rv2_lo_ok")),
+        ])
 
     _data_table(doc, ["Criterion", "Actual", "Limit / Target", "Status"],
                 sizing_data,
                 col_w=[8.5, 3.5, 3.5, 2.0],
                 status_cols=[3])
 
-    # D.1 — LDV
-    if ldv_result is not None:
-        ldv = ldv_result
-        _sub_heading(doc, "D.1  LDV — Liquid Design Volume")
-        _caption(doc,
-                 "Minimum liquid inventory required to fill downstream equipment that are partially "
-                 "empty during operation or startup. Volumes include full vessel geometry "
-                 "(cylinder + both endcaps). User specifies required LDV + safety factor; "
-                 "two independent checks: Segment A (VB → LZLL) ≥ LDV×SF  and  Segment B (LZLL → LALL) ≥ LDV×SF.")
-        _sf_b = ldv.get("sf_b", ldv["sf"])
-        ldv_pairs = [
-            ("Effective vessel bottom (VB)",
-             f"{ldv['eff_vb_mm']:.0f} mm above vessel bottom"),
-            ("Safety factor — Seg A", f"{ldv['sf']:.2f}"),
-            ("Safety factor — Seg B", f"{_sf_b:.2f}"),
-        ]
-        if ldv.get("target_m3") is not None:
-            _req_a = (ldv.get("ldv_required_a_m3") or ldv.get("ldv_required_m3") or 0.0)
-            _req_b = (ldv.get("ldv_required_b_m3") or ldv.get("ldv_required_m3") or 0.0)
-            ldv_pairs.append(("Required LDV (before SF)",
-                              f"{ldv['target_m3']*1000:.1f} L  ({ldv['target_m3']:.4f} m³)"))
-            ldv_pairs.append(("", ""))  # spacer
-            ldv_pairs.append(("Segment A (VB → LZLL)",
-                              f"{ldv['seg_a_m3']*1000:.1f} L  ({ldv['seg_a_m3']:.4f} m³)"))
-            ldv_pairs.append((f"Seg A Required  (Target × SF {ldv['sf']:.2f})",
-                              f"{_req_a*1000:.1f} L  ({_req_a:.4f} m³)"))
-            ldv_pairs.append(("Segment A ≥ Required?",
-                              "✓ PASS" if ldv.get("seg_a_ok") else "✗ FAIL"))
-            ldv_pairs.append(("", ""))  # spacer
-            ldv_pairs.append(("Segment B (LZLL → LALL)",
-                              f"{ldv['seg_b_m3']*1000:.1f} L  ({ldv['seg_b_m3']:.4f} m³)"))
-            ldv_pairs.append((f"Seg B Required  (Target × SF {_sf_b:.2f})",
-                              f"{_req_b*1000:.1f} L  ({_req_b:.4f} m³)"))
-            ldv_pairs.append(("Segment B ≥ Required?",
-                              "✓ PASS" if ldv.get("seg_b_ok") else "✗ FAIL"))
-            ldv_pairs.append(("", ""))
-            ldv_pairs.append(("Both segments adequate?",
-                              "✓ PASS" if ldv.get("ok") else "✗ FAIL"))
-        else:
-            ldv_pairs.append(("Segment A (VB → LZLL)",
-                              f"{ldv['seg_a_m3']*1000:.1f} L  ({ldv['seg_a_m3']:.4f} m³)"))
-            ldv_pairs.append(("Segment B (LZLL → LALL)",
-                              f"{ldv['seg_b_m3']*1000:.1f} L  ({ldv['seg_b_m3']:.4f} m³)"))
-            ldv_pairs.append(("Note", "Specify an LDV target to see pass/fail checks."))
-        _kv_table(doc, ldv_pairs)
-
-    # D.2 — Internals mechanical loads
-    if int_loads_result is not None:
-        il = int_loads_result
-        _sub_heading(doc, "D.2  Internals — Mechanical Loads (LDV Startup Surge)")
-        _caption(doc,
-                 f"Governing load case: LDV inventory ({il['V_ldv_m3']*1000:.1f} L) "
-                 f"floods into vessel in {il['t_flood_s']:.0f} s, split across "
-                 f"{il['n_inlets']} inlet(s). "
-                 "Pure liquid density assumed (startup slug). "
-                 "No standard prescribes this method — verify per project structural code "
-                 "(EN 1993-1-8 / AWS D1.1). Safety factors: SF = 3.0 inlet device (impulsive), "
-                 "SF = 2.0 baffle (quasi-static).")
-        _kv_table(doc, [
-            ("LDV surge flow per inlet",
-             f"{il['Q_ldv_per_inlet_m3s']*1000:.2f} L/s  "
-             f"({il['V_ldv_m3']*1000:.1f} L in {il['t_flood_s']:.0f} s)"),
-            ("", ""),
-            (f"Inlet device — nozzle DN{il['nozzle_dn']} (ID {il['nz_id_mm']:.0f} mm)",
-             f"A = {il['A_nozzle_m2']*1e4:.1f} cm²"),
-            ("Inlet surge velocity",   f"{il['v_ldv_ms']:.2f} m/s"),
-            ("Impact force (unfactored)", f"{il['F_impact_N']:,.0f} N"),
-            (f"Design force  (SF {il['SF_inlet']:.0f})", f"{il['F_inlet_design_N']:,.0f} N"),
-            ("Basis", "F = ρ_liq × v² × A_nozzle  (first principles)"),
-            ("", ""),
-            (f"Baffle plate  (φ = {il['phi']*100:.0f} %, Cd = 0.61)", ""),
-            ("Surge ΔP",               f"{il['dP_surge_Pa']:,.0f} Pa"),
-            ("Governing force (unfactored)", f"{il['F_baffle_surge_N']:,.0f} N"),
-            (f"Design force  (SF {il['SF_baffle']:.0f})", f"{il['F_baffle_design_N']:,.0f} N"),
-            ("Gas ΔP operating (ref.)", f"{il['dP_gas_op_Pa']:.1f} Pa"),
-            ("", ""),
-            ("Min. plate thickness (clamped plate + API 12J ≥ 6 mm)",
-             f"{il['t_baffle_design_mm']:.1f} mm  (calc. {il['t_baffle_min_mm']:.1f} mm)"),
-            (f"Fillet weld throat  (τ_allow = {il['tau_allow_Pa']/1e6:.0f} MPa = 0.4·f_y)",
-             f"{il['a_weld_design_mm']:.1f} mm  (calc. {il['a_weld_req_mm']:.1f} mm, min 3 mm)"),
-            ("Weld perimeter", f"{il['L_weld_m']*1000:.0f} mm  (full circumference)"),
-            ("Material f_d / f_y", f"{il['fd_MPa']:.0f} MPa / {il['fy_MPa']:.0f} MPa"),
-        ])
-
-    # ── D.x — Turndown Analysis ───────────────────────────────────────────────
+    # C.1 — Turndown Analysis
     if turndown_result is not None:
         td = turndown_result
-        _d_td_num = 1 + (1 if ldv_result else 0) + (1 if int_loads_result else 0)
-        _sub_heading(doc, f"D.{_d_td_num}  Turndown Analysis  ({td['pct']} % of design flow)")
+        _sub_heading(doc, f"C.1  Turndown Analysis  ({td['pct']} % of design flow)")
         _caption(doc,
                  f"Service: {td.get('svc_condition', '—')}  ·  "
                  f"Re-entrainment limit = 1.15 × K = {td['U_reentrain_ms']:.3f} m/s  ·  "
@@ -878,6 +695,201 @@ def generate_word_report(
                     td_rows,
                     col_w=[7.5, 2.5, 2.5, 1.5, 1.5],
                     status_cols=[3, 4])
+
+    # C.2 — LDV
+    if ldv_result is not None:
+        ldv = ldv_result
+        _sub_heading(doc, "C.2  LDV — Liquid Design Volume")
+        _caption(doc,
+                 "Minimum liquid inventory required to fill downstream equipment that are partially "
+                 "empty during operation or startup. Volumes include full vessel geometry "
+                 "(cylinder + both endcaps). User specifies required LDV + safety factor; "
+                 "two independent checks: Segment A (VB → LZLL) ≥ LDV×SF  and  Segment B (LZLL → LALL) ≥ LDV×SF.")
+        _sf_b = ldv.get("sf_b", ldv["sf"])
+        ldv_pairs = [
+            ("Effective vessel bottom (VB)",
+             f"{ldv['eff_vb_mm']:.0f} mm above vessel bottom"),
+            ("Safety factor — Seg A", f"{ldv['sf']:.2f}"),
+            ("Safety factor — Seg B", f"{_sf_b:.2f}"),
+        ]
+        if ldv.get("target_m3") is not None:
+            _req_a = (ldv.get("ldv_required_a_m3") or ldv.get("ldv_required_m3") or 0.0)
+            _req_b = (ldv.get("ldv_required_b_m3") or ldv.get("ldv_required_m3") or 0.0)
+            ldv_pairs.append(("Required LDV (before SF)",
+                              f"{ldv['target_m3']*1000:.1f} L  ({ldv['target_m3']:.4f} m³)"))
+            ldv_pairs.append(("", ""))  # spacer
+            ldv_pairs.append(("Segment A (VB → LZLL)",
+                              f"{ldv['seg_a_m3']*1000:.1f} L  ({ldv['seg_a_m3']:.4f} m³)"))
+            ldv_pairs.append((f"Seg A Required  (Target × SF {ldv['sf']:.2f})",
+                              f"{_req_a*1000:.1f} L  ({_req_a:.4f} m³)"))
+            ldv_pairs.append(("Segment A ≥ Required?",
+                              "✓ PASS" if ldv.get("seg_a_ok") else "✗ FAIL"))
+            ldv_pairs.append(("", ""))  # spacer
+            ldv_pairs.append(("Segment B (LZLL → LALL)",
+                              f"{ldv['seg_b_m3']*1000:.1f} L  ({ldv['seg_b_m3']:.4f} m³)"))
+            ldv_pairs.append((f"Seg B Required  (Target × SF {_sf_b:.2f})",
+                              f"{_req_b*1000:.1f} L  ({_req_b:.4f} m³)"))
+            ldv_pairs.append(("Segment B ≥ Required?",
+                              "✓ PASS" if ldv.get("seg_b_ok") else "✗ FAIL"))
+            ldv_pairs.append(("", ""))
+            ldv_pairs.append(("Both segments adequate?",
+                              "✓ PASS" if ldv.get("ok") else "✗ FAIL"))
+        else:
+            ldv_pairs.append(("Segment A (VB → LZLL)",
+                              f"{ldv['seg_a_m3']*1000:.1f} L  ({ldv['seg_a_m3']:.4f} m³)"))
+            ldv_pairs.append(("Segment B (LZLL → LALL)",
+                              f"{ldv['seg_b_m3']*1000:.1f} L  ({ldv['seg_b_m3']:.4f} m³)"))
+            ldv_pairs.append(("Note", "Specify an LDV target to see pass/fail checks."))
+        _kv_table(doc, ldv_pairs)
+
+    # C.3 — Internals mechanical loads
+    if int_loads_result is not None:
+        il = int_loads_result
+        _sub_heading(doc, "C.3  Internals — Mechanical Loads (LDV Startup Surge)")
+        _caption(doc,
+                 f"Governing load case: LDV inventory ({il['V_ldv_m3']*1000:.1f} L) "
+                 f"floods into vessel in {il['t_flood_s']:.0f} s, split across "
+                 f"{il['n_inlets']} inlet(s). "
+                 "Pure liquid density assumed (startup slug). "
+                 "No standard prescribes this method — verify per project structural code "
+                 "(EN 1993-1-8 / AWS D1.1). Safety factors: SF = 3.0 inlet device (impulsive), "
+                 "SF = 2.0 baffle (quasi-static).")
+        _kv_table(doc, [
+            ("LDV surge flow per inlet",
+             f"{il['Q_ldv_per_inlet_m3s']*1000:.2f} L/s  "
+             f"({il['V_ldv_m3']*1000:.1f} L in {il['t_flood_s']:.0f} s)"),
+            ("", ""),
+            (f"Inlet device — nozzle DN{il['nozzle_dn']} (ID {il['nz_id_mm']:.0f} mm)",
+             f"A = {il['A_nozzle_m2']*1e4:.1f} cm²"),
+            ("Inlet surge velocity",   f"{il['v_ldv_ms']:.2f} m/s"),
+            ("Impact force (unfactored)", f"{il['F_impact_N']:,.0f} N"),
+            (f"Design force  (SF {il['SF_inlet']:.0f})", f"{il['F_inlet_design_N']:,.0f} N"),
+            ("Basis", "F = ρ_liq × v² × A_nozzle  (first principles)"),
+            ("", ""),
+            (f"Baffle plate  (φ = {il['phi']*100:.0f} %, Cd = 0.61)", ""),
+            ("Surge ΔP",               f"{il['dP_surge_Pa']:,.0f} Pa"),
+            ("Governing force (unfactored)", f"{il['F_baffle_surge_N']:,.0f} N"),
+            (f"Design force  (SF {il['SF_baffle']:.0f})", f"{il['F_baffle_design_N']:,.0f} N"),
+            ("Gas ΔP operating (ref.)", f"{il['dP_gas_op_Pa']:.1f} Pa"),
+            ("", ""),
+            ("Min. plate thickness (clamped plate + API 12J ≥ 6 mm)",
+             f"{il['t_baffle_design_mm']:.1f} mm  (calc. {il['t_baffle_min_mm']:.1f} mm)"),
+            (f"Fillet weld throat  (τ_allow = {il['tau_allow_Pa']/1e6:.0f} MPa = 0.4·f_y)",
+             f"{il['a_weld_design_mm']:.1f} mm  (calc. {il['a_weld_req_mm']:.1f} mm, min 3 mm)"),
+            ("Weld perimeter", f"{il['L_weld_m']*1000:.0f} mm  (full circumference)"),
+            ("Material f_d / f_y", f"{il['fd_MPa']:.0f} MPa / {il['fy_MPa']:.0f} MPa"),
+        ])
+
+    # ── D — Mechanical Design ─────────────────────────────────────────────────
+    doc.add_page_break()
+    _section_heading(doc, "D", "Mechanical Design")
+    _kv_table(doc, [
+        ("Inner diameter Di",             f"{Di:,.0f} mm"),
+        ("Shell length (T–T)",            f"{L_shell:,.0f} mm"),
+        ("Overall length (pole–pole)",    f"{L_shell + 2*h_head:,.0f} mm"),
+        ("Head type",                     head_type_label),
+        ("Head depth h",                  f"{h_head:.0f} mm"),
+        ("Material (shell & heads)",      mat_name),
+        ("Allowable stress fd",           f"{fd_MPa:.1f} MPa  at {T_C:.0f} °C"),
+        ("Corrosion allowance CA",        f"{CA_mm:.1f} mm"),
+        ("Weld joint efficiency z",       f"{z_weld:.2f}"),
+        ("Shell thickness — calculated",  f"{shell_res.t_calc_mm:.3f} mm"),
+        ("Shell thickness — nominal",     f"{shell_res.t_nom_mm:.1f} mm"),
+        ("Head thickness — calculated",   f"{head_res.t_calc_mm:.3f} mm"),
+        ("Head thickness — nominal",      f"{head_res.t_nom_mm:.1f} mm"),
+        ("Support type",                  "Saddle supports — 2 off"),
+        ("Saddle position (from tangent)", f"{saddle_a_mm:.0f} mm" if saddle_a_mm > 0 else "TBD"),
+        ("Saddle width",                  f"{saddle_w_mm:.0f} mm"),
+    ])
+
+    # D.1 — Weight estimate (always first under mechanical design)
+    if weight_result is not None:
+        wt = weight_result
+        _sub_heading(doc, "D.1  Weight Estimate")
+        _caption(doc,
+                 "Estimated weights ±15–20 %. Shell and heads use nominal wall thickness. "
+                 "Nozzle weight = pipe stub (300 mm projection) + one weld-neck flange per nozzle. "
+                 "Saddle weight from plate-area estimate. Misc +5 % covers welds, paint, support clips.")
+        _total_w = max(wt["m_dry_kg"], 1.0)
+        def _wpct_w(m): return f"{m / _total_w * 100:.1f} %"
+        _kv_table(doc, [
+            ("Dry weight",
+             f"{wt['m_dry_kg']:,.0f} kg  ({wt['m_dry_kg']/1000:.2f} t)"),
+            ("Operating weight",
+             f"{wt['m_operating_kg']:,.0f} kg  ({wt['m_operating_kg']/1000:.2f} t)  "
+             f"[liquid at NLL: {wt['m_liquid_op_kg']:,.0f} kg]"),
+            ("Hydrotest weight",
+             f"{wt['m_hydrotest_kg']:,.0f} kg  ({wt['m_hydrotest_kg']/1000:.2f} t)  "
+             f"[water fill: {wt['m_water_ht_kg']:,.0f} kg]"),
+        ])
+        _sub_heading(doc, "Dry weight breakdown")
+        _data_table(doc,
+            ["Component", "Mass (kg)", "% of dry"],
+            [
+                ["Shell",               f"{wt['m_shell_kg']:,.0f}",    _wpct_w(wt['m_shell_kg'])],
+                ["Heads × 2",           f"{wt['m_heads_kg']:,.0f}",    _wpct_w(wt['m_heads_kg'])],
+                [f"Nozzles ({len(wt['nozzle_detail'])})",
+                                         f"{wt['m_nozzles_kg']:,.0f}", _wpct_w(wt['m_nozzles_kg'])],
+                ["Saddles × 2",         f"{wt['m_saddles_kg']:,.0f}",  _wpct_w(wt['m_saddles_kg'])],
+                ["Internals",           f"{wt['m_internals_kg']:,.0f}",_wpct_w(wt['m_internals_kg'])],
+                [f"Misc (+{wt['misc_factor']*100:.0f} %)",
+                                         f"{wt['m_misc_kg']:,.0f}",   f"{wt['misc_factor']*100:.0f} %"],
+                ["Total dry",           f"{wt['m_dry_kg']:,.0f}",      "100 %"],
+            ],
+            col_w=[6.0, 3.5, 3.0],
+        )
+
+    _sub_heading(doc, "D.2  Shell Thickness Calculation")
+    _kv_table(doc, [
+        ("Formula (EN / ASME cylindrical)", shell_res.formula),
+        ("Code clause",                     shell_res.clause),
+        ("Calculated minimum thickness",    f"{shell_res.t_calc_mm:.3f} mm"),
+        ("Corrosion allowance CA",          f"{CA_mm:.1f} mm"),
+        ("Nominal thickness selected",      f"{shell_res.t_nom_mm:.1f} mm  (rounded to next 0.5 mm)"),
+        ("Weld joint efficiency z",         f"{z_weld:.2f}"),
+    ])
+
+    _sub_heading(doc, "D.3  Head Thickness Calculation")
+    _kv_table(doc, [
+        ("Head type",                  head_type_label),
+        ("Formula",                    head_res.formula),
+        ("Code clause",                head_res.clause),
+        ("Calculated minimum thickness", f"{head_res.t_calc_mm:.3f} mm"),
+        ("Corrosion allowance CA",     f"{CA_mm:.1f} mm"),
+        ("Nominal thickness selected", f"{head_res.t_nom_mm:.1f} mm"),
+    ])
+    if head_warnings:
+        for w in head_warnings:
+            _caption(doc, f"⚠  {w}")
+    if shell_res.warnings:
+        for w in shell_res.warnings:
+            _caption(doc, f"⚠  {w}")
+
+    # D.4 — Internal lining / surface treatment
+    if lining_spec:
+        ls = lining_spec
+        lining_pairs: list[tuple[str, str]] = []
+        if ls.get("has_clad"):
+            lining_pairs += [
+                ("Internal cladding / weld overlay", ls["clad_material"]),
+                ("Cladding thickness", f"{ls['clad_t_mm']:.1f} mm  (min., after forming)"),
+                ("Note", "Cladding does not contribute to pressure-bearing wall thickness"),
+            ]
+            if ls.get("clad_note"):
+                lining_pairs.append(("Cladding specification", ls["clad_note"]))
+        if ls.get("has_enp"):
+            lining_pairs += [
+                ("Internal surface plating", ls["enp_type"]),
+                ("Plating thickness", f"{ls['enp_t_um']:.0f} µm  (min.)"),
+                ("Note", "Plating does not contribute to pressure-bearing wall thickness"),
+            ]
+            if ls.get("enp_note"):
+                lining_pairs.append(("Plating specification", ls["enp_note"]))
+        if ls.get("free_text"):
+            lining_pairs.append(("Additional material / treatment notes", ls["free_text"]))
+        if lining_pairs:
+            _sub_heading(doc, "D.4  Internal Lining / Surface Treatment")
+            _kv_table(doc, lining_pairs)
 
     # ── E — Liquid Levels ─────────────────────────────────────────────────────
     _section_heading(doc, "E", "Liquid Levels & Volumes")
@@ -970,6 +982,35 @@ def generate_word_report(
                      "Fitted at liquid outlet; prevents gas core formation at low liquid levels"],
                 ],
                 col_w=[2.8, 5.0, 1.0, 8.7])
+
+    # F.1 — Inlet Device Sizing
+    if inlet_dev_sizing is not None:
+        ids = inlet_dev_sizing
+        _sub_heading(doc, "F.1  Inlet Device Sizing  (API 12J §5.3)")
+        if ids.device_type == "Half-pipe diverter":
+            _kv_table(doc, [
+                ("Device type",          "Half-pipe diverter  (API 12J §5.3.1)"),
+                ("Half-pipe OD",         f"{ids.D_device_mm:.0f} mm  (≥ 1.5 × nozzle OD {ids.nozzle_OD_mm:.0f} mm)"),
+                ("Half-pipe length",     f"{ids.L_device_mm:.0f} mm"),
+                ("Face area",            f"{ids.A_opening_m2*1e4:.1f} cm²"),
+                ("Area ratio  (A_face / A_nozzle)", f"{ids.area_ratio:.2f}  (≥ 2.0 required)"),
+                ("Impact velocity",      f"{ids.v_face_ms:.2f} m/s"),
+                ("ρv² at device face",   f"{ids.rv2_face_Pa:,.0f} Pa  (limit {ids.rv2_limit_Pa:,.0f} Pa)"),
+                ("Overall adequacy",     "✓ OK" if ids.adequate else "✗ FAIL"),
+            ])
+        elif ids.device_type == "Slotted/perforated cylinder":
+            _kv_table(doc, [
+                ("Device type",         "Slotted/perforated cylinder  (API 12J §5.3.2)"),
+                ("Cylinder OD",         f"{ids.D_device_mm:.0f} mm"),
+                ("Cylinder length",     f"{ids.L_device_mm:.0f} mm"),
+                ("Total slot area",     f"{ids.A_slot_mm2:,.0f} mm²  ({ids.area_ratio:.2f} × nozzle area)"),
+                ("Indicative holes",    f"{ids.n_holes_dn25} × DN25"),
+                ("Velocity through slots", f"{ids.v_face_ms:.2f} m/s"),
+                ("ρv² at slots",        f"{ids.rv2_face_Pa:,.0f} Pa  (limit {ids.rv2_limit_Pa:,.0f} Pa)"),
+                ("Overall adequacy",    "✓ OK" if ids.adequate else "✗ FAIL"),
+            ])
+        elif ids.device_type == "Vane distributor (vendor-sized)":
+            _kv_table(doc, [("Device type", "Vane distributor"), ("Sizing", "Per vendor data sheet")])
 
     # ── G — Nozzle Schedule ───────────────────────────────────────────────────
     doc.add_page_break()

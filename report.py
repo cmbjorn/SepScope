@@ -6,13 +6,18 @@ Structure (mirrors industry standard / API 12J Annex E):
   Sketch      — SVG side elevation with nozzles, levels, dimensions
   A  Design conditions   — operating & design P/T, hydro test
   B  Process fluids      — gas phase | liquid phase tables + inlet summary
-  C  Mechanical design   — geometry, thicknesses, material, supports, weight
-  D  Separator sizing    — API 12J screening results (criterion/actual/limit/status)
-  D.1  LDV              — Liquid Design Volume detail
-  D.2  Internal loads   — mechanical loads from LDV startup surge
+  C  Separator sizing    — API 12J screening results (criterion/actual/limit/status)
+  C.1  Turndown Analysis — turndown check at reduced flow
+  C.2  LDV              — Liquid Design Volume detail
+  C.3  Internal loads   — mechanical loads from LDV startup surge
+  D  Mechanical design   — geometry, thicknesses, material, supports, weight
+  D.1  Weight estimate  — always first under mechanical
+  D.2  Internal lining  — optional surface treatment
   E  Liquid levels       — LZLL → LZHH with heights and volumes
   F  Internals           — inlet device, baffles, demister, vortex breaker
+  F.1  Inlet device sizing — API 12J §5.3 detailed sizing
   G  Nozzle schedule     — fabricator-relevant columns
+  G.1  Endcap nozzle analysis — HTML only
   H  Notes & findings    — engineering findings + disclaimer
 """
 from __future__ import annotations
@@ -967,6 +972,7 @@ def generate_datasheet_html(
     turndown_result: dict | None = None,
     inlet_dev_type: str = "Half-pipe diverter",
     inlet_dev_sizing=None,   # InletDeviceSizing | None
+    outlet_vel: dict | None = None,   # keys: dn_go, v_go, rv2_go, rv2_go_ok, dn_lo, v_lo, rv2_lo, rv2_lo_ok
     Z_gas: float = 1.0,
     lining_spec: dict | None = None,
     # Head geometry — needed for endcap drawings and analysis
@@ -1236,7 +1242,7 @@ def generate_datasheet_html(
     z_label  = ("1.0  (full radiography)" if z_weld >= 1.0
                 else f"{z_weld:.2f}  (partial radiography)")
 
-    sec_c = _sec("C", "Mechanical Design", _kv(
+    sec_c = _sec("D", "Mechanical Design", _kv(
         ("Inner diameter  Di",           f"{Di:,.0f}  mm"),
         ("Shell length  T–T",            f"{L_shell:,.0f}  mm"),
         ("Overall length  P–P",          f"{L_shell + 2*h_head:,.0f}  mm"),
@@ -1255,8 +1261,7 @@ def generate_datasheet_html(
         ("Saddle width",                 f"{saddle_w_mm:.0f}  mm"),
     ))
 
-    # Lining / surface treatment section (C.1 when specified)
-    _c1_used = False
+    # Lining / surface treatment section (D.2 when specified)
     if lining_spec:
         ls = lining_spec
         lining_rows: list[tuple[str, str]] = []
@@ -1275,14 +1280,13 @@ def generate_datasheet_html(
         if ls.get("free_text"):
             lining_rows.append(("Material / treatment notes", ls["free_text"]))
         if lining_rows:
-            sec_c += _sec("C.1", "Internal Lining / Surface Treatment", _kv(*lining_rows))
-            _c1_used = True
+            sec_c += _sec("D.2", "Internal Lining / Surface Treatment", _kv(*lining_rows))
 
-    # Weight estimate — end of mechanical design section
+    # Weight estimate — always D.1 under mechanical design
     sec_c_weight = ""
     if weight_result is not None:
         wt = weight_result
-        _c_wt_label = "C.2" if _c1_used else "C.1"
+        _c_wt_label = "D.1"
         _total_cw = max(wt["m_dry_kg"], 1.0)
         def _wpct_cw(m): return f"{m / _total_cw * 100:.1f} %"
         _wt_summary_c = _kv(
@@ -1380,6 +1384,20 @@ def generate_datasheet_html(
             "≤ 2 400  Pa",
             _rv2 <= 2400.0,
         ))
+    if outlet_vel and outlet_vel.get("rv2_go") is not None:
+        sizing_rows.append(_row(
+            f"Gas outlet nozzle ρv²  (DN{outlet_vel['dn_go']})  [API RP 14E]",
+            f"{outlet_vel['rv2_go']:,.0f}  Pa",
+            "≤ 2 400  Pa",
+            outlet_vel.get("rv2_go_ok"),
+        ))
+    if outlet_vel and outlet_vel.get("rv2_lo") is not None:
+        sizing_rows.append(_row(
+            f"Liquid outlet nozzle ρv²  (DN{outlet_vel['dn_lo']})  [API RP 14E]",
+            f"{outlet_vel['rv2_lo']:,.0f}  Pa",
+            "≤ 8 000  Pa",
+            outlet_vel.get("rv2_lo_ok"),
+        ))
     sizing_rows += [
         _row("Liquid droplet cut size — gas phase  (drag-corrected Stokes)",
              f"{sep_res.d_cut_gas_um:.0f}  μm",
@@ -1391,7 +1409,7 @@ def generate_datasheet_html(
              None),
     ]
 
-    sec_d = _sec("D", "Separator Sizing  (API 12J screening)",
+    sec_d = _sec("C", "Separator Sizing  (API 12J screening)",
                  _dt(["Criterion", "Actual", "Limit", "Status"], sizing_rows))
 
     # ── D.1  LDV — LIQUID DESIGN VOLUME ─────────────────────────────────────
@@ -1445,7 +1463,7 @@ def generate_datasheet_html(
             "(cylinder + both endcaps). Two independent checks: "
             "Segment A (VB → LZLL) ≥ LDV×SF  and  Segment B (LZLL → LALL) ≥ LDV×SF.</p>"
         )
-        sec_d_ldv = _sec("D.1", "LDV — Liquid Design Volume",
+        sec_d_ldv = _sec("C.2", "LDV — Liquid Design Volume",
                          _kv(*_ldv_pairs) + _ldv_note)
 
     # ── D.2  INTERNALS MECHANICAL LOADS ──────────────────────────────────────
@@ -1499,7 +1517,7 @@ def generate_datasheet_html(
             'No standard prescribes this method — verify per project structural code.</p>'
         )
         sec_d1 = _sec(
-            "D.2",
+            "C.3",
             "Internals — Mechanical Loads  (LDV Startup Surge)",
             f'<div style="display:flex;gap:16px;flex-wrap:wrap">'
             f'{_panel("Inlet Device (per inlet)", _inlet_kv)}'
@@ -1508,11 +1526,10 @@ def generate_datasheet_html(
             f'{_note}',
         )
 
-    # ── D.x  TURNDOWN ANALYSIS ───────────────────────────────────────────────
+    # ── C.1  TURNDOWN ANALYSIS ───────────────────────────────────────────────
     sec_d_td = ""
     if turndown_result is not None:
         td = turndown_result
-        _d_td_num = 1 + (1 if ldv_result else 0) + (1 if int_loads_result else 0)
 
         def _tds(ok):
             if ok is True:  return '<span class="ok">✓</span>'
@@ -1562,7 +1579,7 @@ def generate_datasheet_html(
             f"Hold-up and surge times increase at turndown — always pass.</p>"
         )
         sec_d_td = _sec(
-            f"D.{_d_td_num}", f"Turndown Analysis  ({td['pct']} % of design flow)",
+            "C.1", f"Turndown Analysis  ({td['pct']} % of design flow)",
             _dt(["Criterion", f"Design (100 %)", f"Turndown ({td['pct']} %)",
                  "Design", "TD"], td_rows)
             + _td_note,
@@ -1667,6 +1684,42 @@ def generate_datasheet_html(
     ]
     sec_f = _sec("F", "Internals",
                  _dt(["Component", "Description", "Qty", "Function / Notes"], internals_rows))
+
+    # ── F.1  INLET DEVICE SIZING ─────────────────────────────────────────────
+    sec_f1 = ""
+    if inlet_dev_sizing is not None:
+        ids = inlet_dev_sizing
+        if ids.device_type == "Half-pipe diverter":
+            _dev_kv = _kv(
+                ("Device type",            "Half-pipe diverter  (API 12J §5.3.1)"),
+                ("Half-pipe OD",           f"{ids.D_device_mm:.0f}  mm  (≥ 1.5 × nozzle OD {ids.nozzle_OD_mm:.0f} mm)"),
+                ("Half-pipe length",       f"{ids.L_device_mm:.0f}  mm"),
+                ("Face area",              f"{ids.A_opening_m2*1e4:.1f}  cm²"),
+                ("Nozzle bore area",       f"{ids.A_nozzle_m2*1e4:.1f}  cm²"),
+                ("Area ratio  (A_face / A_nozzle)", f"{ids.area_ratio:.2f}  (≥ 2.0 required)"),
+                ("Impact velocity",        f"{ids.v_face_ms:.2f}  m/s"),
+                ("ρv² at device face",     f"{ids.rv2_face_Pa:,.0f}  Pa  (limit {ids.rv2_limit_Pa:,.0f} Pa — {ids.svc_condition})"),
+                ("Overall adequacy",       "✓ OK" if ids.adequate else "✗ FAIL — see findings"),
+            )
+        elif ids.device_type == "Slotted/perforated cylinder":
+            _dev_kv = _kv(
+                ("Device type",            "Slotted/perforated cylinder  (API 12J §5.3.2)"),
+                ("Cylinder OD",            f"{ids.D_device_mm:.0f}  mm"),
+                ("Cylinder length",        f"{ids.L_device_mm:.0f}  mm"),
+                ("Total slot area",        f"{ids.A_slot_mm2:,.0f}  mm²  ({ids.area_ratio:.2f} × nozzle area)"),
+                ("Indicative hole layout", f"{ids.n_holes_dn25} × DN25 holes"),
+                ("Velocity through slots", f"{ids.v_face_ms:.2f}  m/s"),
+                ("ρv² at slots",           f"{ids.rv2_face_Pa:,.0f}  Pa  (limit {ids.rv2_limit_Pa:,.0f} Pa — {ids.svc_condition})"),
+                ("Overall adequacy",       "✓ OK" if ids.adequate else "✗ FAIL — see findings"),
+            )
+        else:
+            _dev_kv = _kv(("Device type", ids.device_type),
+                          ("Sizing",      "Per vendor data sheet"))
+        sec_f1 = _sec("F.1", "Inlet Device Sizing  (API 12J §5.3)", _dev_kv)
+    elif has_inlet_dev and inlet_dev_type == "Vane distributor (vendor-sized)":
+        sec_f1 = _sec("F.1", "Inlet Device Sizing  (API 12J §5.3)",
+                      _kv(("Device type", "Vane distributor"),
+                          ("Sizing",      "Per vendor data sheet — no API 12J formula")))
 
     # ── G  NOZZLE SCHEDULE ────────────────────────────────────────────────────
     lzhh_mm = levels_mm.get("LZHH", 0.0)
@@ -1807,9 +1860,10 @@ def generate_datasheet_html(
 
     body = (
         header_html + banner + sketch_html
-        + sec_a + sec_b + sec_c + sec_c_weight
-        + sec_d + sec_d_ldv + sec_d1 + sec_d_td
-        + sec_e + sec_f + sec_g + sec_g1 + sec_h
+        + sec_a + sec_b
+        + sec_d + sec_d_td + sec_d_ldv + sec_d1    # C (sizing) first
+        + sec_c + sec_c_weight                      # D (mechanical)
+        + sec_e + sec_f + sec_f1 + sec_g + sec_g1 + sec_h
         + footer
     )
 

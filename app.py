@@ -3164,6 +3164,36 @@ def main():
         "svc_condition":    svc_condition,
     }
 
+    # ── Outlet nozzle velocities ──────────────────────────────────────────────
+    def _nozzle_rv2(nz_dict, Q_m3h, rho_kgm3):
+        """Return (dn, ID_mm, v_ms, rv2_Pa) for the given nozzle and flow."""
+        dn  = nz_dict["dn"]
+        OD  = NOZZLE_OD.get(dn, dn * 1.05)
+        rec = recommended_schedule(nz_dict.get("pn", 25), code_key)
+        t   = float(NOZZLE_WALL_SCH[rec].get(dn, NOZZLE_WALL_T.get(dn, 8.0)))
+        ID  = max(OD - 2 * t, 1.0)
+        A   = _math.pi * (ID * 1e-3) ** 2 / 4.0
+        v   = (Q_m3h / 3600.0) / max(A, 1e-9)
+        return dn, ID, v, rho_kgm3 * v ** 2
+
+    _go_nz_list = [nz for nz, *_ in nozzle_results if nz.get("service") == "Gas outlet"]
+    _lo_nz_list = [nz for nz, *_ in nozzle_results if nz.get("service") == "Liquid outlet"]
+
+    _outlet_vel = {
+        "dn_go":     None, "ID_go":    None, "v_go":    None, "rv2_go":    None,
+        "rv2_go_ok": None,
+        "dn_lo":     None, "ID_lo":    None, "v_lo":    None, "rv2_lo":    None,
+        "rv2_lo_ok": None,
+    }
+    if _go_nz_list:
+        dn, ID, v, rv2 = _nozzle_rv2(_go_nz_list[0], Q_gas_m3h, rho_gas)
+        _outlet_vel.update(dn_go=dn, ID_go=ID, v_go=v, rv2_go=rv2,
+                           rv2_go_ok=(rv2 <= 2400.0))
+    if _lo_nz_list:
+        dn, ID, v, rv2 = _nozzle_rv2(_lo_nz_list[0], Q_liq_m3h, rho_liq)
+        _outlet_vel.update(dn_lo=dn, ID_lo=ID, v_lo=v, rv2_lo=rv2,
+                           rv2_lo_ok=(rv2 <= 8000.0))
+
     # ── Inlet device sizing ───────────────────────────────────────────────────
     _inlet_dev_sizing = None
     if has_inlet_dev and _inlet_nz_list:
@@ -3374,17 +3404,27 @@ def main():
                    delta="OK (3–5)" if ld_ok else ("TOO SHORT" if ld < 3 else "VERY LONG"),
                    delta_color="normal" if ld_ok else "inverse")
 
-        # Inlet nozzle ρv² — use pre-computed values
+        # Inlet / outlet nozzle ρv² checks (API RP 14E)
+        sc3.markdown("**Nozzle momentum  ρv²  (API RP 14E)**")
         if _rho_v2_design is not None:
             _nz0 = _inlet_nz_list[0]
-            sc3.metric(f"Inlet nozzle ρv² (DN{_nz0['dn']})",
+            sc3.metric(f"Inlet DN{_nz0['dn']}  (two-phase mixture)",
                        f"{_rho_v2_design:,.0f} Pa",
-                       delta=f"{'OK' if _rv2_design_ok else 'EXCEEDS 2 400 Pa'} — limit 2 400 Pa",
-                       delta_color="normal" if _rv2_design_ok else "inverse")
-            sc3.caption(
-                f"v_in = {_v_in_design:.2f} m/s  ·  ρ_mix = {_rho_mix_sep:.1f} kg/m³  "
-                f"(API RP 14E)"
-            )
+                       delta=f"{'OK' if _rv2_design_ok else 'EXCEEDS'} — lim 2 400 Pa",
+                       delta_color="normal" if _rv2_design_ok else "inverse",
+                       help=f"v = {_v_in_design:.2f} m/s  ρ_mix = {_rho_mix_sep:.1f} kg/m³")
+        if _outlet_vel["rv2_go"] is not None:
+            sc3.metric(f"Gas outlet DN{_outlet_vel['dn_go']}  (gas)",
+                       f"{_outlet_vel['rv2_go']:,.0f} Pa",
+                       delta=f"{'OK' if _outlet_vel['rv2_go_ok'] else 'EXCEEDS'} — lim 2 400 Pa",
+                       delta_color="normal" if _outlet_vel["rv2_go_ok"] else "inverse",
+                       help=f"v = {_outlet_vel['v_go']:.2f} m/s  ρ_gas = {rho_gas:.3f} kg/m³")
+        if _outlet_vel["rv2_lo"] is not None:
+            sc3.metric(f"Liquid outlet DN{_outlet_vel['dn_lo']}  (liquid)",
+                       f"{_outlet_vel['rv2_lo']:,.0f} Pa",
+                       delta=f"{'OK' if _outlet_vel['rv2_lo_ok'] else 'EXCEEDS'} — lim 8 000 Pa",
+                       delta_color="normal" if _outlet_vel["rv2_lo_ok"] else "inverse",
+                       help=f"v = {_outlet_vel['v_lo']:.2f} m/s  ρ_liq = {rho_liq:.0f} kg/m³")
 
         sc3.markdown("**Liquid inventory (incl. heads)**")
         inv_rows = [
@@ -3888,6 +3928,7 @@ def main():
             int_loads_result=_int_loads,
             weight_result=_weight_result,
             turndown_result=_turndown_result,
+            outlet_vel=_outlet_vel,
             inlet_dev_type=inlet_dev_type,
             inlet_dev_sizing=_inlet_dev_sizing,
             Z_gas=Z_gas,
@@ -3939,6 +3980,7 @@ def main():
             int_loads_result=_int_loads,
             weight_result=_weight_result,
             turndown_result=_turndown_result,
+            outlet_vel=_outlet_vel,
             inlet_dev_type=inlet_dev_type,
             inlet_dev_sizing=_inlet_dev_sizing,
             Z_gas=Z_gas,
