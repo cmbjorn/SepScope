@@ -601,8 +601,8 @@ def generate_word_report(
         ["Surge time  NLL → LAHH",
          f"{sep_res.t_surge_s/60:.1f} min", surge_limit,
          _status(surge_ok_val)],
-        ["NLL fill fraction  (NLL / Di)  [target 40–60 %]",
-         f"{sep_res.nll_frac*100:.0f} %", "40 – 60 %",
+        ["NLL fill fraction  (NLL / Di)  [target 50 %]",
+         f"{sep_res.nll_frac*100:.0f} %", "35 – 65 %",
          _status(0.35 <= sep_res.nll_frac <= 0.65)],
         ["Liquid droplet cut size (gas phase)",
          f"{sep_res.d_cut_gas_um:.0f} μm", "Informational", "— N/A"],
@@ -1156,6 +1156,34 @@ def generate_word_report(
 
     _sub_heading(doc, "H.1  Engineering Findings")
     all_findings = []
+
+    # Sizing-table failures (Section C) — consolidate so H is not "no issues"
+    # while the sizing table shows a failed criterion.
+    for _r in sizing_data:
+        if len(_r) >= 4 and "FAIL" in str(_r[3]):
+            _crit_clean = str(_r[0]).split("  [")[0]
+            all_findings.append(
+                ("error", "[Sizing] ", f"{_crit_clean}: {_r[1]}  (limit {_r[2]})"))
+
+    # Nozzle reinforcement / geometry failures (Section G)
+    for _nz, _nres, _rres, *_ in nozzle_results:
+        if _rres is not None and _rres.adequate is False:
+            if _rres.A_deficit_mm2 > 0:
+                all_findings.append(
+                    ("error", "[Nozzle] ",
+                     f"{_nz['tag']} reinforcement inadequate "
+                     f"(area deficit {_rres.A_deficit_mm2:,.0f} mm²) — pad or schedule upgrade required."))
+            elif _rres.warnings:
+                all_findings.append(("error", "[Nozzle] ", f"{_nz['tag']}: {_rres.warnings[0]}"))
+            else:
+                all_findings.append(
+                    ("error", "[Nozzle] ",
+                     f"{_nz['tag']} reinforcement not valid as placed — specialist analysis required."))
+        if _nres is not None and _nres.geom_ok is False:
+            all_findings.append(
+                ("error", "[Nozzle] ",
+                 f"{_nz['tag']} geometry not buildable as placed — relocate or resize."))
+
     for w in head_warnings + shell_res.warnings:
         all_findings.append(("warning", "", w))
     for chk in placement_checks:

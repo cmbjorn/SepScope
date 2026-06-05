@@ -176,8 +176,11 @@ def _e(s) -> str:
     return _esc.escape(str(s))
 
 def _kv(*pairs, split=46) -> str:
+    # Values may carry pre-formatted inline HTML (e.g. <b>…</b>); pass those
+    # through verbatim and escape everything else. Keys are always escaped.
     rows = "".join(
-        f'<tr><td class="k">{_e(k)}</td><td class="v">{_e(v)}</td></tr>'
+        f'<tr><td class="k">{_e(k)}</td>'
+        f'<td class="v">{v if str(v).startswith("<") else _e(str(v))}</td></tr>'
         for k, v in pairs
     )
     return f'<table class="kv">{rows}</table>'
@@ -1367,9 +1370,9 @@ def generate_datasheet_html(
              f"{sep_res.t_surge_s/60:.1f}  min",
              _surge_limit,
              sep_res.surge_ok if include_surge_check else None),
-        _row("NLL fill fraction  (NLL / Di)  [target ~50 %]",
+        _row("NLL fill fraction  (NLL / Di)  [target 50 %]",
              f"{sep_res.nll_frac*100:.0f}  %",
-             "40 – 60 %",
+             "35 – 65 %",
              0.35 <= sep_res.nll_frac <= 0.65),
     ]
     if inlet_nzs:
@@ -1802,6 +1805,34 @@ def generate_datasheet_html(
 
     # ── H  NOTES & ENGINEERING FINDINGS ──────────────────────────────────────
     all_findings = []
+
+    # Sizing-table failures (Section C) — consolidate hard FAILs so the reader
+    # is not told "no issues" while the sizing table shows a failed criterion.
+    for _crit, _act, _lim, _stat in sizing_rows:
+        if "FAIL" in _stat:
+            _crit_clean = _crit.split("  [")[0]
+            all_findings.append(
+                ("error", "[Sizing] ", f"{_crit_clean}: {_act}  (limit {_lim})"))
+
+    # Nozzle reinforcement / geometry failures (Section G)
+    for _nz, _nres, _rres, *_ in nozzle_results:
+        if _rres is not None and _rres.adequate is False:
+            if _rres.A_deficit_mm2 > 0:
+                all_findings.append(
+                    ("error", "[Nozzle] ",
+                     f"{_nz['tag']} reinforcement inadequate "
+                     f"(area deficit {_rres.A_deficit_mm2:,.0f} mm²) — reinforcing pad or schedule upgrade required."))
+            elif _rres.warnings:
+                all_findings.append(("error", "[Nozzle] ", f"{_nz['tag']}: {_rres.warnings[0]}"))
+            else:
+                all_findings.append(
+                    ("error", "[Nozzle] ",
+                     f"{_nz['tag']} reinforcement not valid as placed — specialist analysis required."))
+        if _nres is not None and _nres.geom_ok is False:
+            all_findings.append(
+                ("error", "[Nozzle] ",
+                 f"{_nz['tag']} geometry not buildable as placed — relocate or resize."))
+
     for w in head_warnings + shell_warnings:
         all_findings.append(("warning", "", w))
     for chk in placement_checks:
