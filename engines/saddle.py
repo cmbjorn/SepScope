@@ -15,8 +15,14 @@ for a chosen basis so the user can see — and minimise — the mounting height.
 All dimensions in mm.
 """
 from __future__ import annotations
+import math
 
 from .nozzle_geometry import NOZZLE_OD
+
+_G = 9.81                  # m/s²
+_FY_SADDLE_MPA = 235.0     # saddle steel yield (S235, carbon steel — saddles are always CS)
+_SIGMA_ALLOW_BASE = 0.66 * _FY_SADDLE_MPA   # baseplate bending allowable (≈ 155 MPa)
+SADDLE_WRAP_ANGLES = [120, 150, 168]        # EN 13445-3 §16.8 / Zick contact angles
 
 # Basis options (the first is the safe default).
 BASIS_CLEAR_NOZZLES = "Clear bottom nozzles"
@@ -46,6 +52,82 @@ def _bottom_nozzle_projection(dn: int) -> float:
     return stub + flange_t
 
 
+def zick_saddle_design(
+    Di_mm: float,
+    saddle_w_mm: float,
+    weight_result: dict,
+    wrap_angle_deg: float = 120.0,
+    bearing_pressure_MPa: float = 3.5,
+) -> dict:
+    """
+    Firm up the saddle/foundation from the saddle reaction load (Zick basis).
+
+    Two symmetric saddles carry the (heaviest) hydrotest weight; each reaction Q
+    bears on a baseplate sized from the foundation allowable bearing pressure.
+    The baseplate thickness (cantilever bending) and a load-spread stand minimum
+    then replace the rule-of-thumb height drivers.
+
+    Returns reaction loads, baseplate dimensions, the bearing check, the firmed
+    baseplate thickness `t_base_mm`, and a firmed structural-minimum stand
+    `h_struct_mm`.
+    """
+    R = Di_mm / 2.0
+    theta = math.radians(wrap_angle_deg)
+
+    m_hydro = float(weight_result.get("m_hydrotest_kg", 0.0))
+    m_oper = float(weight_result.get("m_operating_kg", 0.0))
+    W_hydro_N = m_hydro * _G
+    W_oper_N = m_oper * _G
+    Q_N = W_hydro_N / 2.0                       # reaction per saddle (hydrotest governs)
+
+    # Saddle contact chord (transverse, between horns) — the bearing footprint width.
+    c_contact = Di_mm * math.sin(theta / 2.0)
+    L_bp = max(saddle_w_mm, 50.0)              # baseplate length along the vessel axis
+
+    p_allow = max(bearing_pressure_MPa, 1e-6)  # MPa = N/mm²
+    A_req = Q_N / p_allow                       # required bearing area, mm²
+    B_req = A_req / L_bp                         # bearing-driven width, mm
+    B_max = Di_mm                               # practical limit: ≤ vessel diameter
+    # Width is the largest of the bearing demand and the contact chord, but capped
+    # at a practical maximum — if the cap binds, the foundation is inadequate.
+    B = max(min(B_req, B_max), c_contact, 150.0)
+    p_act = Q_N / (B * L_bp)                     # actual bearing pressure, MPa
+    bearing_ok = p_act <= p_allow * 1.001
+
+    # Baseplate thickness from cantilever bending of the overhang under p_act.
+    c_over = max((B - c_contact) / 2.0, 0.25 * B)
+    t_bp = math.sqrt(3.0 * p_act * c_over ** 2 / _SIGMA_ALLOW_BASE)
+    t_bp = max(12.0, math.ceil(t_bp))
+
+    # Firmed structural-minimum stand: load-spread floor (web ≥ overhang).
+    h_struct = max(150.0, 0.10 * R, c_over)
+
+    warnings: list[str] = []
+    if not bearing_ok:
+        warnings.append(
+            f"Foundation bearing {p_act:.2f} MPa exceeds the allowable "
+            f"{p_allow:.2f} MPa — enlarge the baseplate or the footing.")
+
+    return {
+        "wrap_angle_deg": wrap_angle_deg,
+        "W_operating_N": W_oper_N,
+        "W_hydrotest_N": W_hydro_N,
+        "Q_per_saddle_N": Q_N,
+        "c_contact_mm": c_contact,
+        "B_mm": B,
+        "L_bp_mm": L_bp,
+        "p_act_MPa": p_act,
+        "p_allow_MPa": p_allow,
+        "bearing_ok": bearing_ok,
+        "t_base_mm": t_bp,
+        "h_struct_mm": h_struct,
+        "warnings": warnings,
+        "note": ("Reaction-based foundation firming (Zick basis): two symmetric "
+                 "saddles, hydrotest load governing. Full Zick shell-stress "
+                 "analysis (EN 13445-3 §16.8) recommended for detailed design."),
+    }
+
+
 def saddle_height(
     Di_mm: float,
     t_shell_nom_mm: float,
@@ -53,17 +135,34 @@ def saddle_height(
     basis: str = BASIS_CLEAR_NOZZLES,
     custom_height_mm: float | None = None,
     ground_clearance_mm: float = 100.0,
+    weight_result: dict | None = None,
+    saddle_w_mm: float = 250.0,
+    wrap_angle_deg: float = 120.0,
+    bearing_pressure_MPa: float = 3.5,
 ) -> dict:
     """
     Compute the saddle stand height and overall mounting height for a basis.
 
+    When `weight_result` is supplied, the baseplate thickness and the structural-
+    minimum stand are firmed up from the Zick saddle reaction + foundation
+    bearing (see `zick_saddle_design`); otherwise rule-of-thumb values are used.
+
     Returns a dict with the geometry breakdown, the governing constraint, the
-    bottom-nozzle clearance requirement, and any layout warnings.
+    bottom-nozzle clearance requirement, any layout warnings, and (when weight is
+    given) a `zick` sub-dict.
     """
     R = Di_mm / 2.0
     Do = Di_mm + 2.0 * t_shell_nom_mm
-    t_base = _baseplate_thickness(Di_mm)
-    h_struct = max(150.0, 0.10 * R)
+
+    zick = None
+    if weight_result is not None:
+        zick = zick_saddle_design(Di_mm, saddle_w_mm, weight_result,
+                                  wrap_angle_deg, bearing_pressure_MPa)
+        t_base = zick["t_base_mm"]          # load-derived baseplate (firmed)
+        h_struct = zick["h_struct_mm"]      # load-spread stand minimum (firmed)
+    else:
+        t_base = _baseplate_thickness(Di_mm)
+        h_struct = max(150.0, 0.10 * R)
 
     # Bottom nozzles (liquid outlet / drain) hang below the shell and set the
     # clearance the saddle must provide to keep their flanges above the feet.
@@ -113,6 +212,9 @@ def saddle_height(
 
     overall = Do + h_stand + t_base
 
+    if zick is not None:
+        warnings = warnings + zick["warnings"]
+
     return {
         "basis": basis,
         "Di_mm": Di_mm,
@@ -127,4 +229,5 @@ def saddle_height(
         "bottom_nozzles": bottom,
         "warnings": warnings,
         "code_note": CODE_NOTE,
+        "zick": zick,
     }

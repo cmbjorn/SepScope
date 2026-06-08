@@ -13,7 +13,7 @@ from engines import (
     HeadType, head_geometry, head_thickness,
     shell_thickness, nozzle_on_head, reinforcement_check,
     separator_check, internal_loads, vessel_weights,
-    saddle_height, SADDLE_HEIGHT_BASES,
+    saddle_height, SADDLE_HEIGHT_BASES, SADDLE_WRAP_ANGLES,
     gas_properties, liquid_properties, FluidProps, GAS_FLUIDS, LIQ_FLUIDS,
 )
 from engines.nozzle_geometry import (
@@ -2031,6 +2031,18 @@ def main():
             saddle_custom_h_mm = st.number_input(
                 "Custom saddle stand height (mm)", min_value=0.0, max_value=5000.0,
                 value=300.0, step=25.0)
+        saddle_wrap_deg = st.selectbox(
+            "Saddle contact (wrap) angle", SADDLE_WRAP_ANGLES, index=0,
+            format_func=lambda a: f"{a}°",
+            help="Saddle bearing arc (EN 13445-3 §16.8 / Zick). ≥120°; larger "
+                 "spreads the load over more of the shell. Feeds the Zick reaction "
+                 "and baseplate sizing.")
+        saddle_bearing_MPa = st.number_input(
+            "Foundation allowable bearing pressure (MPa)", min_value=0.1,
+            max_value=20.0, value=3.5, step=0.5,
+            help="Allowable bearing stress of the foundation under the baseplate "
+                 "(e.g. ~3–10 MPa for concrete). Sizes the baseplate from the "
+                 "saddle reaction (hydrotest load).")
 
         # ── Nozzle session-state init + proportional rescale when L_shell changes ──
         if "nozzles" not in st.session_state:
@@ -2395,13 +2407,6 @@ def main():
 
     shell_res = shell_thickness(Di, P_barg, fd, z=z_weld, CA_mm=CA_mm, code=code_key)
 
-    # Overall mounting height (top of vessel → bottom of saddle feet).
-    _saddle_h = saddle_height(
-        Di, shell_res.t_nom_mm, st.session_state.get("nozzles", []),
-        basis=saddle_height_basis, custom_height_mm=saddle_custom_h_mm,
-        ground_clearance_mm=saddle_ground_clr_mm,
-    )
-
     head_res = head_thickness(
         head_type, Di, P_barg, fd, z=z_weld, CA_mm=CA_mm, code=code_key,
         crown_ratio=crown_ratio, knuckle_ratio=knuckle_ratio,
@@ -2649,25 +2654,6 @@ def main():
             if _hd is not None:
                 c3.metric("Head depth", f"{_hd:.1f} mm")
             st.caption(f"{head_res.clause}  —  {head_res.formula}")
-
-        with st.expander("**Overall height (top → saddle feet)**", expanded=False):
-            _sh = _saddle_h
-            h1, h2, h3 = st.columns(3)
-            h1.metric("Overall height", f"{_sh['overall_height_mm']:,.0f} mm",
-                      help="Top of vessel crown to bottom of the saddle feet (baseplate).")
-            h2.metric("Saddle stand height", f"{_sh['h_stand_mm']:,.0f} mm",
-                      help=f"Governed by: {_sh['governing']}")
-            h3.metric("Outer diameter Dₒ", f"{_sh['Do_mm']:,.0f} mm")
-            st.caption(
-                f"Dₒ {_sh['Do_mm']:,.0f} + stand {_sh['h_stand_mm']:,.0f} + "
-                f"baseplate {_sh['t_base_mm']:.0f} = **{_sh['overall_height_mm']:,.0f} mm**  ·  "
-                f"basis: {_sh['basis']}"
-                + (f"  ·  bottom-nozzle clearance needed {_sh['h_clear_mm']:,.0f} mm"
-                   if _sh['bottom_nozzles'] else "  ·  no bottom nozzles")
-            )
-            for _w in _sh["warnings"]:
-                st.warning(_w, icon="⚠️")
-            st.caption(_sh["code_note"])
 
     # ── Nozzle schedule ───────────────────────────────────────────────────────
     with st.expander("**Nozzle schedule**", expanded=True):
@@ -3311,6 +3297,50 @@ def main():
         crown_ratio=crown_ratio, knuckle_ratio=knuckle_ratio,
         alpha_deg_cone=alpha_deg_cone, ellipse_ratio=ellipse_ratio,
     )
+
+    # ── Overall mounting height (firmed by the Zick saddle reaction) ───────────
+    # Computed here (not earlier) because the saddle reaction needs the weight.
+    _saddle_h = saddle_height(
+        Di, shell_res.t_nom_mm, st.session_state.get("nozzles", []),
+        basis=saddle_height_basis, custom_height_mm=saddle_custom_h_mm,
+        ground_clearance_mm=saddle_ground_clr_mm,
+        weight_result=_weight_result, saddle_w_mm=saddle_w_mm,
+        wrap_angle_deg=float(saddle_wrap_deg), bearing_pressure_MPa=saddle_bearing_MPa,
+    )
+
+    with st.expander("**Overall height (top → saddle feet)**", expanded=False):
+        _sh = _saddle_h
+        h1, h2, h3 = st.columns(3)
+        h1.metric("Overall height", f"{_sh['overall_height_mm']:,.0f} mm",
+                  help="Top of vessel crown to bottom of the saddle feet (baseplate).")
+        h2.metric("Saddle stand height", f"{_sh['h_stand_mm']:,.0f} mm",
+                  help=f"Governed by: {_sh['governing']}")
+        h3.metric("Outer diameter Dₒ", f"{_sh['Do_mm']:,.0f} mm")
+        st.caption(
+            f"Dₒ {_sh['Do_mm']:,.0f} + stand {_sh['h_stand_mm']:,.0f} + "
+            f"baseplate {_sh['t_base_mm']:.0f} = **{_sh['overall_height_mm']:,.0f} mm**  ·  "
+            f"basis: {_sh['basis']}"
+            + (f"  ·  bottom-nozzle clearance needed {_sh['h_clear_mm']:,.0f} mm"
+               if _sh['bottom_nozzles'] else "  ·  no bottom nozzles")
+        )
+        _z = _sh.get("zick")
+        if _z is not None:
+            st.markdown("**Zick saddle / foundation** (firms the stand & baseplate)")
+            z1, z2, z3 = st.columns(3)
+            z1.metric("Saddle reaction (hydrotest)",
+                      f"{_z['Q_per_saddle_N']/1000:,.0f} kN",
+                      help=f"Per saddle, two symmetric saddles · {_z['Q_per_saddle_N']/9.81/1000:.1f} t")
+            z2.metric("Foundation bearing",
+                      f"{_z['p_act_MPa']:.2f} / {_z['p_allow_MPa']:.1f} MPa",
+                      delta="OK" if _z["bearing_ok"] else "EXCEEDS",
+                      delta_color="normal" if _z["bearing_ok"] else "inverse")
+            z3.metric("Baseplate B × L × t",
+                      f"{_z['B_mm']:,.0f}×{_z['L_bp_mm']:,.0f}×{_z['t_base_mm']:.0f} mm",
+                      help=f"Contact (wrap) angle {_z['wrap_angle_deg']:.0f}°")
+            st.caption(_z["note"])
+        for _w in _sh["warnings"]:
+            st.warning(_w, icon="⚠️")
+        st.caption(_sh["code_note"])
 
     # ── Process streams summary ───────────────────────────────────────────────
     with st.expander("**Process streams**", expanded=True):

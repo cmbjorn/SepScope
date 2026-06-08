@@ -7,6 +7,39 @@ NZ = [
     {"tag": "GO", "service": "Gas outlet", "loc": "Shell — top", "dn": 150},
 ]
 
+WT = {"m_dry_kg": 5732, "m_operating_kg": 12624, "m_hydrotest_kg": 25208}
+
+
+def test_zick_reaction_is_half_hydrotest_weight():
+    r = saddle_height(1800, 12.5, NZ, "Clear bottom nozzles", weight_result=WT, saddle_w_mm=300)
+    z = r["zick"]
+    assert abs(z["Q_per_saddle_N"] - WT["m_hydrotest_kg"] * 9.81 / 2.0) < 1.0
+    assert abs(z["W_hydrotest_N"] - WT["m_hydrotest_kg"] * 9.81) < 1.0
+
+
+def test_baseplate_thickens_with_load_and_low_bearing():
+    light = saddle_height(1800, 12.5, NZ, "Minimum (structural)",
+                          weight_result={"m_hydrotest_kg": 10000}, saddle_w_mm=300)
+    heavy = saddle_height(1800, 12.5, NZ, "Minimum (structural)",
+                          weight_result={"m_hydrotest_kg": 60000}, saddle_w_mm=300)
+    assert heavy["t_base_mm"] > light["t_base_mm"]            # plate scales with load
+
+
+def test_soft_foundation_fails_bearing_and_warns():
+    r = saddle_height(1800, 12.5, NZ, "Clear bottom nozzles",
+                      weight_result=WT, saddle_w_mm=300, bearing_pressure_MPa=0.2)
+    assert r["zick"]["bearing_ok"] is False
+    assert any("bearing" in w.lower() for w in r["warnings"])
+
+
+def test_zick_firms_baseplate_vs_rule_of_thumb():
+    rule = saddle_height(1800, 12.5, NZ, "Minimum (structural)")            # no weight
+    zick = saddle_height(1800, 12.5, NZ, "Minimum (structural)", weight_result=WT, saddle_w_mm=300)
+    assert rule["zick"] is None
+    assert zick["zick"] is not None
+    # load-derived baseplate is firmer (thicker) than the 0.007·Di rule
+    assert zick["t_base_mm"] >= rule["t_base_mm"]
+
 
 def test_overall_height_decomposition():
     r = saddle_height(1800, 12.5, NZ, "Clear bottom nozzles")

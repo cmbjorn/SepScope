@@ -831,6 +831,19 @@ def generate_word_report(
               f"{sh['ground_clearance_mm']:.0f} mm ground)") if _bn
              else "— (no bottom nozzles)"),
         ])
+        _z = sh.get("zick")
+        if _z is not None:
+            _bear = (f"{_z['p_act_MPa']:.2f} / {_z['p_allow_MPa']:.1f} MPa  "
+                     + ("OK" if _z["bearing_ok"] else "EXCEEDS allowable"))
+            _kv_table(doc, [
+                ("Saddle reaction (per saddle, hydrotest)",
+                 f"{_z['Q_per_saddle_N']/1000:,.0f} kN  ({_z['Q_per_saddle_N']/9.81/1000:.1f} t)"),
+                ("Contact (wrap) angle",       f"{_z['wrap_angle_deg']:.0f}°"),
+                ("Foundation bearing (actual / allowable)", _bear),
+                ("Baseplate B × L × t",
+                 f"{_z['B_mm']:,.0f} × {_z['L_bp_mm']:,.0f} × {_z['t_base_mm']:.0f} mm"),
+            ])
+            _caption(doc, _z["note"])
         for _w in sh.get("warnings", []):
             _caption(doc, f"⚠  {_w}")
         _caption(doc, sh["code_note"])
