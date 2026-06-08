@@ -1799,7 +1799,7 @@ def _render_head_comparison_table(
             "Notes":             note,
         })
     df = pd.DataFrame(table)
-    st.dataframe(df, hide_index=True, use_container_width=True)
+    st.dataframe(df, hide_index=True, width="stretch")
     st.caption(
         "▶ = currently selected head type  ·  Alternative heads use standard default geometry.  ·  "
         "⚠ Knuckle = centre in knuckle zone (standard rules invalid).  ·  "
@@ -1841,9 +1841,9 @@ def main():
 
         _rb1, _rb2 = st.columns(2)
         _gen_btn      = _rb1.button("Datasheet", type="secondary",
-                                     key="gen_report_btn", use_container_width=True)
+                                     key="gen_report_btn", width="stretch")
         _gen_word_btn = _rb2.button("Report", type="secondary",
-                                     key="gen_word_btn", use_container_width=True)
+                                     key="gen_word_btn", width="stretch")
 
         if "report_html" in st.session_state:
             st.download_button(
@@ -1852,7 +1852,7 @@ def main():
                 file_name=st.session_state.get("report_fname", "datasheet.html"),
                 mime="text/html",
                 key="dl_report",
-                use_container_width=True,
+                width="stretch",
             )
         if "report_docx" in st.session_state:
             st.download_button(
@@ -1861,7 +1861,7 @@ def main():
                 file_name=st.session_state.get("report_docx_fname", "design_report.docx"),
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="dl_word",
-                use_container_width=True,
+                width="stretch",
             )
         st.divider()
 
@@ -2496,7 +2496,7 @@ def main():
         has_vortex_brk=has_vortex_brk,
         nozzle_checks=severity_map,
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
     # ── Inline nozzle editor — directly below the drawing ────────────────────
     nozzles: list[dict] = st.session_state["nozzles"]
@@ -2726,7 +2726,7 @@ def main():
                 "OD top→crown":      top_clr_str,
                 "LZHH→inlet bot":    inlet_clr_str,
             })
-        st.dataframe(pd.DataFrame(sched_rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(sched_rows), hide_index=True, width="stretch")
 
     # ── Per-nozzle detail expanders ───────────────────────────────────────────
     nz_cols = st.columns(2)
@@ -2892,7 +2892,7 @@ def main():
                             head_type, Di, R_c, r_k, b, head_res.t_nom_mm,
                             _left_nz, "Left head — face-on view (looking inward)",
                         ),
-                        use_container_width=True, config={"displayModeBar": False},
+                        width="stretch", config={"displayModeBar": False},
                     )
                 if _right_nz:
                     _fc2.plotly_chart(
@@ -2900,7 +2900,7 @@ def main():
                             head_type, Di, R_c, r_k, b, head_res.t_nom_mm,
                             _right_nz, "Right head — face-on view (looking inward)",
                         ),
-                        use_container_width=True, config={"displayModeBar": False},
+                        width="stretch", config={"displayModeBar": False},
                     )
 
             st.markdown(
@@ -3371,7 +3371,7 @@ def main():
                     "ρ_gas (kg/m³)": "—", "ρ_liq (kg/m³)": f"{liq_props.rho_kgm3:.0f}",
                 })
         if stream_rows:
-            st.dataframe(pd.DataFrame(stream_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(stream_rows), hide_index=True, width="stretch")
         if n_inlets > 1:
             st.caption(
                 f"{n_inlets} inlet nozzles — two-phase flow split equally: "
@@ -3497,7 +3497,7 @@ def main():
              "Vol (m³)": f"{vol_res['total_m3']:.3f}",
              "Vol (L)": f"{vol_res['total_m3']*1000:.0f}"},
         ]
-        sc3.dataframe(pd.DataFrame(inv_rows), hide_index=True, use_container_width=True)
+        sc3.dataframe(pd.DataFrame(inv_rows), hide_index=True, width="stretch")
 
         # ── Collection zone: baffle to outlet nozzle ─────────────────────────
         if has_baffles and L_baffle_mm > 0:
@@ -3553,7 +3553,7 @@ def main():
                     f"(baffle setback {L_baffle_mm:.0f} mm each end)."
                 )
                 st.dataframe(pd.DataFrame(_cz_rows), hide_index=True,
-                             use_container_width=True)
+                             width="stretch")
 
         # ── Turndown analysis ─────────────────────────────────────────────────
         td = _turndown_result
@@ -3612,7 +3612,7 @@ def main():
                 "Design": _td_status(td["rv2_ok"]),
                 "Turndown": _td_status(td["rv2_td_ok"]),
             })
-        st.dataframe(pd.DataFrame(_td_rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(_td_rows), hide_index=True, width="stretch")
 
         _td_issues = []
         if not td["gas_reentrain_ok"]:
@@ -3720,7 +3720,7 @@ def main():
                     "Status": ("✓ PASS" if ldv.get("seg_b_ok") else "✗ FAIL") if _has_tgt else "—",
                 },
             ]
-            st.dataframe(pd.DataFrame(_ldv_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(_ldv_rows), hide_index=True, width="stretch")
 
     # ── Inlet device sizing ───────────────────────────────────────────────────
     _dev_label = inlet_dev_type if has_inlet_dev else "None"
@@ -3784,7 +3784,7 @@ def main():
             for note in ids.notes:
                 st.warning(note, icon="⚠️")
             if ids.adequate:
-                st.success("Device sizing adequate per API 12J §5.3 criteria.", icon="✓")
+                st.success("Device sizing adequate per API 12J §5.3 criteria.", icon="✅")
 
     # ── Internals mechanical loads ────────────────────────────────────────────
     with st.expander("**Internals — mechanical loads (fabrication)**", expanded=False):
@@ -3886,7 +3886,7 @@ def main():
                                                  "Mass (kg)": f"{wt['m_misc_kg']:,.0f}",    "% of dry": f"{wt['misc_factor']*100:.0f} %"},
             {"Component": "**Dry total**",       "Mass (kg)": f"**{wt['m_dry_kg']:,.0f}**", "% of dry": "100 %"},
         ]
-        st.dataframe(pd.DataFrame(_brows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(_brows), hide_index=True, width="stretch")
 
         if wt["m_internals_kg"] > 0:
             _ic = []
