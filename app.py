@@ -13,6 +13,7 @@ from engines import (
     HeadType, head_geometry, head_thickness,
     shell_thickness, nozzle_on_head, reinforcement_check,
     separator_check, internal_loads, vessel_weights,
+    saddle_height, SADDLE_HEIGHT_BASES,
     gas_properties, liquid_properties, FluidProps, GAS_FLUIDS, LIQ_FLUIDS,
 )
 from engines.nozzle_geometry import (
@@ -2015,6 +2016,22 @@ def main():
             f"Width: **{saddle_w_mm:.0f} mm**  (~0.12 × Di)"
         )
 
+        # Overall mounting height (top of vessel → bottom of saddle feet).
+        saddle_height_basis = st.selectbox(
+            "Saddle height basis", SADDLE_HEIGHT_BASES, index=0,
+            help="How the saddle stand height (and overall mounting height) is set. "
+                 "'Minimum' sits lowest but needs bottom nozzles relocated; "
+                 "'Clear bottom nozzles' keeps the liquid-outlet/drain flanges above grade.")
+        saddle_ground_clr_mm = st.number_input(
+            "Ground clearance under feet (mm)", min_value=0.0, max_value=1000.0,
+            value=100.0, step=25.0,
+            help="Gap kept between the lowest bottom-nozzle flange and grade/baseplate.")
+        saddle_custom_h_mm = None
+        if saddle_height_basis == "Custom":
+            saddle_custom_h_mm = st.number_input(
+                "Custom saddle stand height (mm)", min_value=0.0, max_value=5000.0,
+                value=300.0, step=25.0)
+
         # ── Nozzle session-state init + proportional rescale when L_shell changes ──
         if "nozzles" not in st.session_state:
             st.session_state["nozzles"] = _default_nozzles(Di, L_shell)
@@ -2378,6 +2395,13 @@ def main():
 
     shell_res = shell_thickness(Di, P_barg, fd, z=z_weld, CA_mm=CA_mm, code=code_key)
 
+    # Overall mounting height (top of vessel → bottom of saddle feet).
+    _saddle_h = saddle_height(
+        Di, shell_res.t_nom_mm, st.session_state.get("nozzles", []),
+        basis=saddle_height_basis, custom_height_mm=saddle_custom_h_mm,
+        ground_clearance_mm=saddle_ground_clr_mm,
+    )
+
     head_res = head_thickness(
         head_type, Di, P_barg, fd, z=z_weld, CA_mm=CA_mm, code=code_key,
         crown_ratio=crown_ratio, knuckle_ratio=knuckle_ratio,
@@ -2625,6 +2649,25 @@ def main():
             if _hd is not None:
                 c3.metric("Head depth", f"{_hd:.1f} mm")
             st.caption(f"{head_res.clause}  —  {head_res.formula}")
+
+        with st.expander("**Overall height (top → saddle feet)**", expanded=False):
+            _sh = _saddle_h
+            h1, h2, h3 = st.columns(3)
+            h1.metric("Overall height", f"{_sh['overall_height_mm']:,.0f} mm",
+                      help="Top of vessel crown to bottom of the saddle feet (baseplate).")
+            h2.metric("Saddle stand height", f"{_sh['h_stand_mm']:,.0f} mm",
+                      help=f"Governed by: {_sh['governing']}")
+            h3.metric("Outer diameter Dₒ", f"{_sh['Do_mm']:,.0f} mm")
+            st.caption(
+                f"Dₒ {_sh['Do_mm']:,.0f} + stand {_sh['h_stand_mm']:,.0f} + "
+                f"baseplate {_sh['t_base_mm']:.0f} = **{_sh['overall_height_mm']:,.0f} mm**  ·  "
+                f"basis: {_sh['basis']}"
+                + (f"  ·  bottom-nozzle clearance needed {_sh['h_clear_mm']:,.0f} mm"
+                   if _sh['bottom_nozzles'] else "  ·  no bottom nozzles")
+            )
+            for _w in _sh["warnings"]:
+                st.warning(_w, icon="⚠️")
+            st.caption(_sh["code_note"])
 
     # ── Nozzle schedule ───────────────────────────────────────────────────────
     with st.expander("**Nozzle schedule**", expanded=True):
@@ -3934,6 +3977,7 @@ def main():
             head_warnings=head_res.warnings,
             shell_warnings=shell_res.warnings,
             saddle_a_mm=saddle_a_mm, saddle_w_mm=saddle_w_mm,
+            saddle_height_result=_saddle_h,
             has_meshpad=has_meshpad, has_baffles=has_baffles,
             has_inlet_dev=has_inlet_dev, has_vortex_brk=has_vortex_brk,
             L_baffle_mm=L_baffle_mm, baffle_open_pct=baffle_open_pct,
@@ -3986,6 +4030,7 @@ def main():
             head_warnings=head_res.warnings,
             shell_warnings=shell_res.warnings,
             saddle_a_mm=saddle_a_mm, saddle_w_mm=saddle_w_mm,
+            saddle_height_result=_saddle_h,
             has_meshpad=has_meshpad, has_baffles=has_baffles,
             has_inlet_dev=has_inlet_dev, has_vortex_brk=has_vortex_brk,
             L_baffle_mm=L_baffle_mm, baffle_open_pct=baffle_open_pct,

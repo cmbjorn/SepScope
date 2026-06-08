@@ -10,6 +10,7 @@ from .vessel_volume import vessel_volumes
 from .separator_process import separator_check, SeparatorProcessResult
 from .internal_loads import internal_loads
 from .weight import vessel_weights
+from .saddle import saddle_height, SADDLE_HEIGHT_BASES
 from .fluid_properties import (
     gas_properties, liquid_properties, FluidProps,
     ideal_gas_density, GAS_FLUIDS, LIQ_FLUIDS,

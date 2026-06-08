@@ -11,8 +11,9 @@ Structure (mirrors industry standard / API 12J Annex E):
   C.2  LDV              — Liquid Design Volume detail
   C.3  Internal loads   — mechanical loads from LDV startup surge
   D  Mechanical design   — geometry, thicknesses, material, supports, weight
-  D.1  Weight estimate  — always first under mechanical
-  D.2  Internal lining  — optional surface treatment
+  D.1  Overall height   — top of vessel → bottom of saddle feet, mounting
+  D.2  Weight estimate  — dry / operating / hydro
+  D.3  Internal lining  — optional surface treatment
   E  Liquid levels       — LZLL → LZHH with heights and volumes
   F  Internals           — inlet device, baffles, demister, vortex breaker
   F.1  Inlet device sizing — API 12J §5.3 detailed sizing
@@ -956,6 +957,7 @@ def generate_datasheet_html(
     shell_warnings: list,
     saddle_a_mm: float,
     saddle_w_mm: float,
+    saddle_height_result: dict,
     has_meshpad: bool,
     has_baffles: bool,
     has_inlet_dev: bool,
@@ -1264,7 +1266,32 @@ def generate_datasheet_html(
         ("Saddle width",                 f"{saddle_w_mm:.0f}  mm"),
     ))
 
-    # Lining / surface treatment section (D.2 when specified)
+    # ── D.1  Overall Height & Mounting ────────────────────────────────────────
+    if saddle_height_result is not None:
+        sh = saddle_height_result
+        _bn = sh.get("bottom_nozzles", [])
+        _bn_txt = (", ".join(f"{b['tag']} DN{b['dn']}" for b in _bn) if _bn else "none")
+        _h_rows = _kv(
+            ("Outer diameter  Dₒ  (Di + 2·t)",  f"{sh['Do_mm']:,.0f}  mm"),
+            ("Saddle stand height",             f"{sh['h_stand_mm']:,.0f}  mm"),
+            ("Baseplate thickness",             f"{sh['t_base_mm']:.0f}  mm"),
+            ("Overall height  (top → feet)",
+             f"<b>{sh['overall_height_mm']:,.0f}  mm</b>"),
+            ("Height basis",                    sh["basis"]),
+            ("Governing constraint",            sh["governing"]),
+            ("Structural minimum stand",        f"{sh['h_struct_mm']:,.0f}  mm"),
+            ("Bottom-nozzle clearance req.",
+             (f"{sh['h_clear_mm']:,.0f}  mm  (clears {_bn_txt}, "
+              f"{sh['ground_clearance_mm']:.0f} mm ground)") if _bn
+             else "— (no bottom nozzles)"),
+        )
+        _h_warn = "".join(
+            f'<div class="impl-warn">⚠ {_e(w)}</div>' for w in sh.get("warnings", []))
+        _h_note = (f'<p style="font-size:0.82em;color:#64748b;margin-top:6px">'
+                   f'{_e(sh["code_note"])}</p>')
+        sec_c += _sec("D.1", "Overall Height & Mounting", _h_rows + _h_warn + _h_note)
+
+    # Lining / surface treatment section (D.3 when specified)
     if lining_spec:
         ls = lining_spec
         lining_rows: list[tuple[str, str]] = []
@@ -1283,13 +1310,13 @@ def generate_datasheet_html(
         if ls.get("free_text"):
             lining_rows.append(("Material / treatment notes", ls["free_text"]))
         if lining_rows:
-            sec_c += _sec("D.2", "Internal Lining / Surface Treatment", _kv(*lining_rows))
+            sec_c += _sec("D.3", "Internal Lining / Surface Treatment", _kv(*lining_rows))
 
-    # Weight estimate — always D.1 under mechanical design
+    # Weight estimate — D.2 under mechanical design (after Overall Height D.1)
     sec_c_weight = ""
     if weight_result is not None:
         wt = weight_result
-        _c_wt_label = "D.1"
+        _c_wt_label = "D.2"
         _total_cw = max(wt["m_dry_kg"], 1.0)
         def _wpct_cw(m): return f"{m / _total_cw * 100:.1f} %"
         _wt_summary_c = _kv(

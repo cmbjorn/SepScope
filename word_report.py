@@ -11,10 +11,11 @@ Structure
   C.2        — LDV — Liquid Design Volume (when applicable)
   C.3        — Internals — Mechanical Loads (LDV Startup Surge) (when applicable)
   D          — Mechanical design (geometry, calculated thicknesses, material)
-  D.1        — Weight estimate (always first under mechanical)
-  D.2        — Shell thickness calculation narrative
-  D.3        — Head thickness calculation narrative
-  D.4        — Internal Lining / Surface Treatment (when applicable)
+  D.1        — Overall height & mounting (top of vessel → bottom of saddle feet)
+  D.2        — Weight estimate (dry / operating / hydro)
+  D.3        — Shell thickness calculation narrative
+  D.4        — Head thickness calculation narrative
+  D.5        — Internal Lining / Surface Treatment (when applicable)
   E          — Liquid levels & volumes
   F          — Internals
   F.1        — Inlet Device Sizing (API 12J §5.3)
@@ -409,6 +410,7 @@ def generate_word_report(
     shell_warnings: list,
     saddle_a_mm: float,
     saddle_w_mm: float,
+    saddle_height_result: dict,
     has_meshpad: bool,
     has_baffles: bool,
     has_inlet_dev: bool,
@@ -810,10 +812,33 @@ def generate_word_report(
         ("Saddle width",                  f"{saddle_w_mm:.0f} mm"),
     ])
 
-    # D.1 — Weight estimate (always first under mechanical design)
+    # D.1 — Overall Height & Mounting
+    if saddle_height_result is not None:
+        sh = saddle_height_result
+        _sub_heading(doc, "D.1  Overall Height & Mounting")
+        _bn = sh.get("bottom_nozzles", [])
+        _bn_txt = (", ".join(f"{b['tag']} DN{b['dn']}" for b in _bn) if _bn else "none")
+        _kv_table(doc, [
+            ("Outer diameter Dₒ (Di + 2·t)",   f"{sh['Do_mm']:,.0f} mm"),
+            ("Saddle stand height",            f"{sh['h_stand_mm']:,.0f} mm"),
+            ("Baseplate thickness",            f"{sh['t_base_mm']:.0f} mm"),
+            ("Overall height (top → feet)",    f"{sh['overall_height_mm']:,.0f} mm"),
+            ("Height basis",                   sh["basis"]),
+            ("Governing constraint",           sh["governing"]),
+            ("Structural minimum stand",       f"{sh['h_struct_mm']:,.0f} mm"),
+            ("Bottom-nozzle clearance req.",
+             (f"{sh['h_clear_mm']:,.0f} mm (clears {_bn_txt}, "
+              f"{sh['ground_clearance_mm']:.0f} mm ground)") if _bn
+             else "— (no bottom nozzles)"),
+        ])
+        for _w in sh.get("warnings", []):
+            _caption(doc, f"⚠  {_w}")
+        _caption(doc, sh["code_note"])
+
+    # D.2 — Weight estimate
     if weight_result is not None:
         wt = weight_result
-        _sub_heading(doc, "D.1  Weight Estimate")
+        _sub_heading(doc, "D.2  Weight Estimate")
         _caption(doc,
                  "Estimated weights ±15–20 %. Shell and heads use nominal wall thickness. "
                  "Nozzle weight = pipe stub (300 mm projection) + one weld-neck flange per nozzle. "
@@ -847,7 +872,7 @@ def generate_word_report(
             col_w=[6.0, 3.5, 3.0],
         )
 
-    _sub_heading(doc, "D.2  Shell Thickness Calculation")
+    _sub_heading(doc, "D.3  Shell Thickness Calculation")
     _kv_table(doc, [
         ("Formula (EN / ASME cylindrical)", shell_res.formula),
         ("Code clause",                     shell_res.clause),
@@ -857,7 +882,7 @@ def generate_word_report(
         ("Weld joint efficiency z",         f"{z_weld:.2f}"),
     ])
 
-    _sub_heading(doc, "D.3  Head Thickness Calculation")
+    _sub_heading(doc, "D.4  Head Thickness Calculation")
     _kv_table(doc, [
         ("Head type",                  head_type_label),
         ("Formula",                    head_res.formula),
@@ -896,7 +921,7 @@ def generate_word_report(
         if ls.get("free_text"):
             lining_pairs.append(("Additional material / treatment notes", ls["free_text"]))
         if lining_pairs:
-            _sub_heading(doc, "D.4  Internal Lining / Surface Treatment")
+            _sub_heading(doc, "D.5  Internal Lining / Surface Treatment")
             _kv_table(doc, lining_pairs)
 
     # ── E — Liquid Levels ─────────────────────────────────────────────────────
