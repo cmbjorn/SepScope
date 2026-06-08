@@ -818,10 +818,13 @@ def generate_word_report(
         _sub_heading(doc, "D.1  Overall Height & Mounting")
         _bn = sh.get("bottom_nozzles", [])
         _bn_txt = (", ".join(f"{b['tag']} DN{b['dn']}" for b in _bn) if _bn else "none")
+        _has_bp = sh.get("has_baseplate", True)
         _kv_table(doc, [
+            ("Mounting",                       sh.get("mounting", "—")),
             ("Outer diameter Dₒ (Di + 2·t)",   f"{sh['Do_mm']:,.0f} mm"),
             ("Saddle stand height",            f"{sh['h_stand_mm']:,.0f} mm"),
-            ("Baseplate thickness",            f"{sh['t_base_mm']:.0f} mm"),
+            ("Baseplate thickness",
+             f"{sh['t_base_mm']:.0f} mm" if _has_bp else "— (skid, no baseplate)"),
             ("Overall height (top → feet)",    f"{sh['overall_height_mm']:,.0f} mm"),
             ("Height basis",                   sh["basis"]),
             ("Governing constraint",           sh["governing"]),
@@ -833,16 +836,18 @@ def generate_word_report(
         ])
         _z = sh.get("zick")
         if _z is not None:
-            _bear = (f"{_z['p_act_MPa']:.2f} / {_z['p_allow_MPa']:.1f} MPa  "
-                     + ("OK" if _z["bearing_ok"] else "EXCEEDS allowable"))
-            _kv_table(doc, [
-                ("Saddle reaction (per saddle, hydrotest)",
-                 f"{_z['Q_per_saddle_N']/1000:,.0f} kN  ({_z['Q_per_saddle_N']/9.81/1000:.1f} t)"),
-                ("Contact (wrap) angle",       f"{_z['wrap_angle_deg']:.0f}°"),
-                ("Foundation bearing (actual / allowable)", _bear),
-                ("Baseplate B × L × t",
-                 f"{_z['B_mm']:,.0f} × {_z['L_bp_mm']:,.0f} × {_z['t_base_mm']:.0f} mm"),
-            ])
+            _z_kv = [("Saddle reaction (per saddle, hydrotest)",
+                      f"{_z['Q_per_saddle_N']/1000:,.0f} kN  ({_z['Q_per_saddle_N']/9.81/1000:.1f} t)"),
+                     ("Contact (wrap) angle", f"{_z['wrap_angle_deg']:.0f}°")]
+            if _has_bp:
+                _bear = (f"{_z['p_act_MPa']:.2f} / {_z['p_allow_MPa']:.1f} MPa  "
+                         + ("OK" if _z["bearing_ok"] else "EXCEEDS allowable"))
+                _z_kv += [("Foundation bearing (actual / allowable)", _bear),
+                          ("Baseplate B × L × t",
+                           f"{_z['B_mm']:,.0f} × {_z['L_bp_mm']:,.0f} × {_z['t_base_mm']:.0f} mm")]
+            else:
+                _z_kv += [("Foundation bearing", "N/A — supported on skid")]
+            _kv_table(doc, _z_kv)
             _caption(doc, _z["note"])
         for _w in sh.get("warnings", []):
             _caption(doc, f"⚠  {_w}")

@@ -24,6 +24,11 @@ _FY_SADDLE_MPA = 235.0     # saddle steel yield (S235, carbon steel — saddles 
 _SIGMA_ALLOW_BASE = 0.66 * _FY_SADDLE_MPA   # baseplate bending allowable (≈ 155 MPa)
 SADDLE_WRAP_ANGLES = [120, 150, 168]        # EN 13445-3 §16.8 / Zick contact angles
 
+# Mounting options (first is the default).
+MOUNTING_FOUNDATION = "Concrete foundation (baseplate)"
+MOUNTING_SKID       = "Skid-mounted (no baseplate)"
+SADDLE_MOUNTINGS    = [MOUNTING_FOUNDATION, MOUNTING_SKID]
+
 # Basis options (the first is the safe default).
 BASIS_CLEAR_NOZZLES = "Clear bottom nozzles"
 BASIS_MINIMUM       = "Minimum (structural)"
@@ -58,18 +63,21 @@ def zick_saddle_design(
     weight_result: dict,
     wrap_angle_deg: float = 120.0,
     bearing_pressure_MPa: float = 3.5,
+    has_baseplate: bool = True,
 ) -> dict:
     """
-    Firm up the saddle/foundation from the saddle reaction load (Zick basis).
+    Firm up the saddle from the saddle reaction load (Zick basis).
 
-    Two symmetric saddles carry the (heaviest) hydrotest weight; each reaction Q
-    bears on a baseplate sized from the foundation allowable bearing pressure.
-    The baseplate thickness (cantilever bending) and a load-spread stand minimum
-    then replace the rule-of-thumb height drivers.
+    Two symmetric saddles carry the (heaviest) hydrotest weight; the reaction Q
+    per saddle is always computed. When `has_baseplate` (concrete foundation) the
+    baseplate is sized from the allowable bearing pressure and its thickness +
+    a load-spread stand minimum firm the height. When skid-mounted (no baseplate)
+    the saddle bolts to the skid steelwork: no baseplate is added to the height
+    and there is no foundation-bearing check — the reaction Q sizes the skid
+    beams (structural-steel design, out of scope).
 
-    Returns reaction loads, baseplate dimensions, the bearing check, the firmed
-    baseplate thickness `t_base_mm`, and a firmed structural-minimum stand
-    `h_struct_mm`.
+    Returns reaction loads and, for a foundation, the baseplate dimensions and
+    bearing check; `t_base_mm` is 0 for a skid.
     """
     R = Di_mm / 2.0
     theta = math.radians(wrap_angle_deg)
@@ -79,11 +87,32 @@ def zick_saddle_design(
     W_hydro_N = m_hydro * _G
     W_oper_N = m_oper * _G
     Q_N = W_hydro_N / 2.0                       # reaction per saddle (hydrotest governs)
+    c_contact = Di_mm * math.sin(theta / 2.0)  # saddle contact chord (transverse)
 
-    # Saddle contact chord (transverse, between horns) — the bearing footprint width.
-    c_contact = Di_mm * math.sin(theta / 2.0)
+    warnings: list[str] = []
+
+    if not has_baseplate:
+        # Skid-mounted: no baseplate, no foundation bearing. Saddle bolts to skid.
+        result = {
+            "has_baseplate": False,
+            "wrap_angle_deg": wrap_angle_deg,
+            "W_operating_N": W_oper_N,
+            "W_hydrotest_N": W_hydro_N,
+            "Q_per_saddle_N": Q_N,
+            "c_contact_mm": c_contact,
+            "B_mm": None, "L_bp_mm": None,
+            "p_act_MPa": None, "p_allow_MPa": None, "bearing_ok": None,
+            "t_base_mm": 0.0,
+            "h_struct_mm": max(150.0, 0.10 * R),
+            "warnings": warnings,
+            "note": ("Skid-mounted: the saddle bolts to the skid steelwork — no "
+                     "baseplate and no foundation bearing. The saddle reaction "
+                     "below sizes the skid beams (structural-steel design, out of "
+                     "scope). Two symmetric saddles, hydrotest load governing."),
+        }
+        return result
+
     L_bp = max(saddle_w_mm, 50.0)              # baseplate length along the vessel axis
-
     p_allow = max(bearing_pressure_MPa, 1e-6)  # MPa = N/mm²
     A_req = Q_N / p_allow                       # required bearing area, mm²
     B_req = A_req / L_bp                         # bearing-driven width, mm
@@ -102,13 +131,13 @@ def zick_saddle_design(
     # Firmed structural-minimum stand: load-spread floor (web ≥ overhang).
     h_struct = max(150.0, 0.10 * R, c_over)
 
-    warnings: list[str] = []
     if not bearing_ok:
         warnings.append(
             f"Foundation bearing {p_act:.2f} MPa exceeds the allowable "
             f"{p_allow:.2f} MPa — enlarge the baseplate or the footing.")
 
     return {
+        "has_baseplate": True,
         "wrap_angle_deg": wrap_angle_deg,
         "W_operating_N": W_oper_N,
         "W_hydrotest_N": W_hydro_N,
@@ -139,17 +168,20 @@ def saddle_height(
     saddle_w_mm: float = 250.0,
     wrap_angle_deg: float = 120.0,
     bearing_pressure_MPa: float = 3.5,
+    has_baseplate: bool = True,
 ) -> dict:
     """
     Compute the saddle stand height and overall mounting height for a basis.
 
     When `weight_result` is supplied, the baseplate thickness and the structural-
-    minimum stand are firmed up from the Zick saddle reaction + foundation
-    bearing (see `zick_saddle_design`); otherwise rule-of-thumb values are used.
+    minimum stand are firmed up from the Zick saddle reaction (see
+    `zick_saddle_design`); otherwise rule-of-thumb values are used. `has_baseplate`
+    selects the mounting: a concrete foundation (baseplate adds to the height and
+    a bearing check applies) or a skid (no baseplate, no foundation bearing).
 
     Returns a dict with the geometry breakdown, the governing constraint, the
-    bottom-nozzle clearance requirement, any layout warnings, and (when weight is
-    given) a `zick` sub-dict.
+    bottom-nozzle clearance requirement, any layout warnings, the mounting, and
+    (when weight is given) a `zick` sub-dict.
     """
     R = Di_mm / 2.0
     Do = Di_mm + 2.0 * t_shell_nom_mm
@@ -157,11 +189,11 @@ def saddle_height(
     zick = None
     if weight_result is not None:
         zick = zick_saddle_design(Di_mm, saddle_w_mm, weight_result,
-                                  wrap_angle_deg, bearing_pressure_MPa)
-        t_base = zick["t_base_mm"]          # load-derived baseplate (firmed)
+                                  wrap_angle_deg, bearing_pressure_MPa, has_baseplate)
+        t_base = zick["t_base_mm"]          # load-derived baseplate (0 for skid)
         h_struct = zick["h_struct_mm"]      # load-spread stand minimum (firmed)
     else:
-        t_base = _baseplate_thickness(Di_mm)
+        t_base = _baseplate_thickness(Di_mm) if has_baseplate else 0.0
         h_struct = max(150.0, 0.10 * R)
 
     # Bottom nozzles (liquid outlet / drain) hang below the shell and set the
@@ -217,6 +249,8 @@ def saddle_height(
 
     return {
         "basis": basis,
+        "mounting": MOUNTING_FOUNDATION if has_baseplate else MOUNTING_SKID,
+        "has_baseplate": has_baseplate,
         "Di_mm": Di_mm,
         "Do_mm": Do,
         "t_base_mm": t_base,

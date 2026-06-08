@@ -1271,10 +1271,13 @@ def generate_datasheet_html(
         sh = saddle_height_result
         _bn = sh.get("bottom_nozzles", [])
         _bn_txt = (", ".join(f"{b['tag']} DN{b['dn']}" for b in _bn) if _bn else "none")
+        _has_bp = sh.get("has_baseplate", True)
         _h_rows = _kv(
+            ("Mounting",                        sh.get("mounting", "—")),
             ("Outer diameter  Dₒ  (Di + 2·t)",  f"{sh['Do_mm']:,.0f}  mm"),
             ("Saddle stand height",             f"{sh['h_stand_mm']:,.0f}  mm"),
-            ("Baseplate thickness",             f"{sh['t_base_mm']:.0f}  mm"),
+            ("Baseplate thickness",
+             f"{sh['t_base_mm']:.0f}  mm" if _has_bp else "— (skid, no baseplate)"),
             ("Overall height  (top → feet)",
              f"<b>{sh['overall_height_mm']:,.0f}  mm</b>"),
             ("Height basis",                    sh["basis"]),
@@ -1285,22 +1288,27 @@ def generate_datasheet_html(
               f"{sh['ground_clearance_mm']:.0f} mm ground)") if _bn
              else "— (no bottom nozzles)"),
         )
-        # Zick saddle / foundation rows (firm the baseplate & stand minimum)
+        # Zick saddle rows: foundation → baseplate + bearing; skid → reaction only.
         _z = sh.get("zick")
         _z_rows = ""
         if _z is not None:
-            _bear = (f"{_z['p_act_MPa']:.2f} / {_z['p_allow_MPa']:.1f}  MPa  "
-                     + ("✓ OK" if _z["bearing_ok"] else "✗ EXCEEDS allowable"))
-            _z_rows = ('<div class="sub-sec" style="margin-top:6px">'
-                       'Zick saddle / foundation</div>') + _kv(
-                ("Saddle reaction  (per saddle, hydrotest)",
-                 f"{_z['Q_per_saddle_N']/1000:,.0f}  kN  ({_z['Q_per_saddle_N']/9.81/1000:.1f} t)"),
-                ("Contact (wrap) angle",       f"{_z['wrap_angle_deg']:.0f}°"),
-                ("Foundation bearing  (actual / allowable)", _bear),
-                ("Baseplate  B × L × t",
-                 f"{_z['B_mm']:,.0f} × {_z['L_bp_mm']:,.0f} × {_z['t_base_mm']:.0f}  mm"),
-            ) + (f'<p style="font-size:0.82em;color:#64748b;margin-top:4px">'
-                 f'{_e(_z["note"])}</p>')
+            _z_title = ("Zick saddle / foundation" if _has_bp
+                        else "Zick saddle reaction (for skid design)")
+            _z_kv = [("Saddle reaction  (per saddle, hydrotest)",
+                      f"{_z['Q_per_saddle_N']/1000:,.0f}  kN  ({_z['Q_per_saddle_N']/9.81/1000:.1f} t)"),
+                     ("Contact (wrap) angle", f"{_z['wrap_angle_deg']:.0f}°")]
+            if _has_bp:
+                _bear = (f"{_z['p_act_MPa']:.2f} / {_z['p_allow_MPa']:.1f}  MPa  "
+                         + ("✓ OK" if _z["bearing_ok"] else "✗ EXCEEDS allowable"))
+                _z_kv += [("Foundation bearing  (actual / allowable)", _bear),
+                          ("Baseplate  B × L × t",
+                           f"{_z['B_mm']:,.0f} × {_z['L_bp_mm']:,.0f} × {_z['t_base_mm']:.0f}  mm")]
+            else:
+                _z_kv += [("Foundation bearing", "N/A — supported on skid")]
+            _z_rows = (f'<div class="sub-sec" style="margin-top:6px">{_z_title}</div>'
+                       + _kv(*_z_kv)
+                       + f'<p style="font-size:0.82em;color:#64748b;margin-top:4px">'
+                         f'{_e(_z["note"])}</p>')
         _h_warn = "".join(
             f'<div class="impl-warn">⚠ {_e(w)}</div>' for w in sh.get("warnings", []))
         _h_note = (f'<p style="font-size:0.82em;color:#64748b;margin-top:6px">'

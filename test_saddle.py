@@ -32,6 +32,25 @@ def test_soft_foundation_fails_bearing_and_warns():
     assert any("bearing" in w.lower() for w in r["warnings"])
 
 
+def test_skid_has_no_baseplate_and_no_bearing_check():
+    found = saddle_height(1800, 12.5, NZ, "Clear bottom nozzles",
+                          weight_result=WT, saddle_w_mm=300, has_baseplate=True)
+    skid = saddle_height(1800, 12.5, NZ, "Clear bottom nozzles",
+                         weight_result=WT, saddle_w_mm=300, has_baseplate=False)
+    assert skid["t_base_mm"] == 0.0                          # no baseplate in height
+    assert skid["overall_height_mm"] < found["overall_height_mm"]
+    assert skid["zick"]["bearing_ok"] is None               # no foundation bearing
+    assert skid["zick"]["B_mm"] is None
+    assert skid["zick"]["Q_per_saddle_N"] > 0                # reaction still given (skid)
+    assert "skid" in skid["mounting"].lower()
+
+
+def test_skid_without_weight_drops_baseplate():
+    r = saddle_height(1800, 12.5, NZ, "Minimum (structural)", has_baseplate=False)
+    assert r["t_base_mm"] == 0.0
+    assert abs(r["overall_height_mm"] - (r["Do_mm"] + r["h_stand_mm"])) < 1e-6
+
+
 def test_zick_firms_baseplate_vs_rule_of_thumb():
     rule = saddle_height(1800, 12.5, NZ, "Minimum (structural)")            # no weight
     zick = saddle_height(1800, 12.5, NZ, "Minimum (structural)", weight_result=WT, saddle_w_mm=300)
